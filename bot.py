@@ -26,8 +26,12 @@ class LicenseBot(commands.Bot):
     async def setup_hook(self):
         # Initialize database
         await init_db()
-        # Sync slash commands
+        # Sync slash commands globally and to specific guild for instant availability
         await self.tree.sync()
+        # Instant sync to your server
+        guild = discord.Object(id=1290387028185448469)
+        self.tree.copy_global_to(guild=guild)
+        await self.tree.sync(guild=guild)
         print(f"Synced slash commands")
 
     async def on_ready(self):
