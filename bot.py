@@ -13,7 +13,7 @@ from config import DISCORD_TOKEN, ADMIN_IDS, SECRET_KEY
 from database import (
     init_db, add_license, get_license_by_key, get_license_by_user,
     revoke_license, revoke_user_licenses, delete_license, delete_user_licenses,
-    get_all_active_licenses, get_license_stats
+    extend_license, extend_user_license, get_all_active_licenses, get_license_stats
 )
 from license_crypto import generate_license_key, get_key_info
 
@@ -194,6 +194,62 @@ async def delete(
             f"**Permanently deleted** {count} license(s) for {user.mention}.",
             ephemeral=True
         )
+
+
+@bot.tree.command(name="extend", description="Add days to an existing license")
+@is_admin()
+@app_commands.describe(
+    days="Number of days to add",
+    key="The license key to extend (optional)",
+    user="The user whose license to extend (optional)"
+)
+async def extend(
+    interaction: discord.Interaction,
+    days: int,
+    key: Optional[str] = None,
+    user: Optional[discord.User] = None
+):
+    """Add days to an existing license."""
+    if not key and not user:
+        await interaction.response.send_message(
+            "Please provide either a license key or a user.",
+            ephemeral=True
+        )
+        return
+
+    if days < 1:
+        await interaction.response.send_message(
+            "Days must be at least 1.",
+            ephemeral=True
+        )
+        return
+
+    if key:
+        new_expiry = await extend_license(key, days)
+        if new_expiry:
+            expiry_dt = datetime.fromisoformat(new_expiry)
+            await interaction.response.send_message(
+                f"License extended by **{days} days**.\nNew expiry: **{expiry_dt.strftime('%Y-%m-%d %H:%M UTC')}**",
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                "License not found.",
+                ephemeral=True
+            )
+    else:
+        new_expiry = await extend_user_license(str(user.id), days)
+        if new_expiry:
+            expiry_dt = datetime.fromisoformat(new_expiry)
+            await interaction.response.send_message(
+                f"Extended {user.mention}'s license by **{days} days**.\nNew expiry: **{expiry_dt.strftime('%Y-%m-%d %H:%M UTC')}**",
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                f"{user.mention} has no license to extend.",
+                ephemeral=True
+            )
 
 
 @bot.tree.command(name="list", description="List all active licenses")

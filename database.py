@@ -1,6 +1,6 @@
 """Async SQLite database operations for license management."""
 import aiosqlite
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 from config import DATABASE_PATH
 
@@ -129,6 +129,49 @@ async def delete_user_licenses(discord_id: str) -> int:
         )
         await db.commit()
         return cursor.rowcount
+
+
+async def extend_license(license_key: str, days: int) -> Optional[str]:
+    """Extend a license by adding days. Returns new expiry date or None if not found."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT expires_at FROM licenses WHERE license_key = ?",
+            (license_key,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                return None
+
+            # Parse current expiry and add days
+            current_expiry = datetime.fromisoformat(row["expires_at"])
+            now = datetime.utcnow()
+
+            # If already expired, extend from now; otherwise extend from current expiry
+            base = max(current_expiry, now)
+            new_expiry = base + timedelta(days=days)
+
+            await db.execute(
+                "UPDATE licenses SET expires_at = ?, revoked = 0 WHERE license_key = ?",
+                (new_expiry.isoformat(), license_key)
+            )
+            await db.commit()
+            return new_expiry.isoformat()
+
+
+async def extend_user_license(discord_id: str, days: int) -> Optional[str]:
+    """Extend the most recent license for a user. Returns new expiry date or None."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT license_key, expires_at FROM licenses WHERE discord_id = ? ORDER BY expires_at DESC LIMIT 1",
+            (discord_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                return None
+
+            return await extend_license(row["license_key"], days)
 
 
 async def get_all_active_licenses() -> List[Dict]:
