@@ -49,9 +49,9 @@ async def verify_license(key: str):
                 row = await cursor.fetchone()
 
                 if not row:
-                    # Key not in database - might be valid offline key
-                    # Return valid=True but with a note
-                    return {"valid": True, "reason": "not_in_db"}
+                    # Key not in database - reject it
+                    # All valid keys must be in the database
+                    return {"valid": False, "reason": "not_found"}
 
                 # Check if revoked
                 if row["revoked"]:
