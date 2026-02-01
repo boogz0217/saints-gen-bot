@@ -109,6 +109,28 @@ async def revoke_user_licenses(discord_id: str) -> int:
         return cursor.rowcount
 
 
+async def delete_license(license_key: str) -> bool:
+    """Permanently delete a license by key."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "DELETE FROM licenses WHERE license_key = ?",
+            (license_key,)
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def delete_user_licenses(discord_id: str) -> int:
+    """Permanently delete all licenses for a user. Returns count of deleted licenses."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "DELETE FROM licenses WHERE discord_id = ?",
+            (discord_id,)
+        )
+        await db.commit()
+        return cursor.rowcount
+
+
 async def get_all_active_licenses() -> List[Dict]:
     """Get all active (non-revoked, non-expired) licenses."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
