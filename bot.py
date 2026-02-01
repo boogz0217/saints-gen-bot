@@ -325,7 +325,20 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 
 # ==================== RUN BOT ====================
 
+def run_api():
+    """Run the FastAPI server in a separate thread."""
+    import uvicorn
+    from api import app
+    import os
+
+    port = int(os.getenv("PORT", 8080))
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+
+
 def main():
+    import threading
+    import os
+
     if not DISCORD_TOKEN:
         print("ERROR: DISCORD_TOKEN not set!")
         print("Please set the DISCORD_TOKEN environment variable or create a .env file.")
@@ -337,6 +350,12 @@ def main():
     if SECRET_KEY == "CHANGE_THIS_TO_A_SECURE_RANDOM_STRING":
         print("WARNING: Using default SECRET_KEY. Please set a secure key for production!")
 
+    # Start API server in background thread
+    api_thread = threading.Thread(target=run_api, daemon=True)
+    api_thread.start()
+    print(f"API server started on port {os.getenv('PORT', 8080)}")
+
+    # Run Discord bot (blocking)
     bot.run(DISCORD_TOKEN)
 
 
