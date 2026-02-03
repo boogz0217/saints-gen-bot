@@ -12,7 +12,8 @@ def generate_license_key(
     secret_key: str,
     discord_id: str,
     days: int,
-    discord_name: str = ""
+    discord_name: str = "",
+    avatar_url: str = ""
 ) -> Tuple[str, datetime]:
     """
     Generate a signed license key.
@@ -31,6 +32,10 @@ def generate_license_key(
         "exp": expires_timestamp,
         "nonce": secrets.token_hex(8)  # Random nonce to make each key unique
     }
+
+    # Add avatar URL if provided (shortened key for smaller license key)
+    if avatar_url:
+        payload["av"] = avatar_url
 
     # Encode payload as base64
     payload_json = json.dumps(payload, separators=(",", ":"))

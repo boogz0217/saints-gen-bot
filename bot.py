@@ -69,8 +69,13 @@ async def generate(interaction: discord.Interaction, user: discord.User, days: i
         await interaction.response.send_message("Maximum is 365 days.", ephemeral=True)
         return
 
+    # Get user's avatar URL (if they have one)
+    avatar_url = ""
+    if user.avatar:
+        avatar_url = user.avatar.url
+
     # Generate the key
-    license_key, expires_at = generate_license_key(SECRET_KEY, str(user.id), days, user.name)
+    license_key, expires_at = generate_license_key(SECRET_KEY, str(user.id), days, user.name, avatar_url)
 
     # Store in database
     success = await add_license(
