@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import aiosqlite
 from datetime import datetime
+from typing import Optional
 from config import DATABASE_PATH
 
 app = FastAPI(title="Saint's Gen License API", docs_url=None, redoc_url=None)
@@ -26,12 +27,14 @@ async def root():
 
 
 @app.get("/verify")
-async def verify_license(key: str):
+async def verify_license(key: str, hwid: Optional[str] = None):
     """
     Verify if a license key is valid and not revoked.
+    Also checks hardware ID binding.
 
     Query params:
         key: The license key to verify
+        hwid: The hardware ID of the machine (optional but recommended)
 
     Returns:
         {"valid": true/false, "reason": "..."}
@@ -43,14 +46,12 @@ async def verify_license(key: str):
         async with aiosqlite.connect(DATABASE_PATH) as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
-                "SELECT revoked, expires_at FROM licenses WHERE license_key = ?",
+                "SELECT revoked, expires_at, hwid FROM licenses WHERE license_key = ?",
                 (key,)
             ) as cursor:
                 row = await cursor.fetchone()
 
                 if not row:
-                    # Key not in database - reject it
-                    # All valid keys must be in the database
                     return {"valid": False, "reason": "not_found"}
 
                 # Check if revoked
@@ -61,6 +62,21 @@ async def verify_license(key: str):
                 expires_at = datetime.fromisoformat(row["expires_at"])
                 if expires_at < datetime.utcnow():
                     return {"valid": False, "reason": "expired"}
+
+                # Check hardware ID binding
+                stored_hwid = row["hwid"]
+                if hwid:
+                    if stored_hwid is None:
+                        # First activation - bind to this hardware
+                        await db.execute(
+                            "UPDATE licenses SET hwid = ? WHERE license_key = ?",
+                            (hwid, key)
+                        )
+                        await db.commit()
+                        return {"valid": True, "reason": "activated", "bound": True}
+                    elif stored_hwid != hwid:
+                        # Hardware mismatch - license used on different machine
+                        return {"valid": False, "reason": "hwid_mismatch"}
 
                 return {"valid": True, "reason": "active"}
 

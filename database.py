@@ -224,3 +224,38 @@ async def get_license_stats() -> Dict:
             "revoked": revoked,
             "expired": expired
         }
+
+
+async def reset_hwid_by_key(license_key: str) -> bool:
+    """Reset hardware ID binding for a license. Returns True if found and reset."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "UPDATE licenses SET hwid = NULL WHERE license_key = ?",
+            (license_key,)
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def reset_hwid_by_user(discord_id: str) -> int:
+    """Reset hardware ID binding for all licenses of a user. Returns count reset."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "UPDATE licenses SET hwid = NULL WHERE discord_id = ?",
+            (discord_id,)
+        )
+        await db.commit()
+        return cursor.rowcount
+
+
+async def get_hwid_by_key(license_key: str) -> Optional[str]:
+    """Get the hardware ID bound to a license."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        async with db.execute(
+            "SELECT hwid FROM licenses WHERE license_key = ?",
+            (license_key,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return row[0]
+    return None

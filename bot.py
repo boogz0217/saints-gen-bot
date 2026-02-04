@@ -13,7 +13,8 @@ from config import DISCORD_TOKEN, ADMIN_IDS, SECRET_KEY
 from database import (
     init_db, add_license, get_license_by_key, get_license_by_user,
     revoke_license, revoke_user_licenses, delete_license, delete_user_licenses,
-    extend_license, extend_user_license, get_all_active_licenses, get_license_stats
+    extend_license, extend_user_license, get_all_active_licenses, get_license_stats,
+    reset_hwid_by_key, reset_hwid_by_user, get_hwid_by_key
 )
 from license_crypto import generate_license_key, get_key_info
 
@@ -276,14 +277,17 @@ async def list_licenses(interaction: discord.Interaction):
     for lic in licenses[:10]:
         expires = datetime.fromisoformat(lic["expires_at"])
         days_left = (expires - datetime.utcnow()).days
+        hwid_status = "🔒" if lic.get("hwid") else "🔓"
         embed.add_field(
-            name=f"{lic['discord_name']}",
+            name=f"{hwid_status} {lic['discord_name']}",
             value=f"Expires: {expires.strftime('%Y-%m-%d')} ({days_left}d left)",
             inline=True
         )
 
     if len(licenses) > 10:
-        embed.set_footer(text=f"Showing 10 of {len(licenses)} active licenses")
+        embed.set_footer(text=f"Showing 10 of {len(licenses)} active licenses | 🔒=bound 🔓=unbound")
+    else:
+        embed.set_footer(text="🔒 = hardware bound | 🔓 = not yet activated")
 
     # Add stats
     stats = await get_license_stats()
@@ -321,6 +325,12 @@ async def check(interaction: discord.Interaction, key: str):
     if db_info:
         embed.add_field(name="In Database", value="Yes", inline=True)
         embed.add_field(name="Revoked", value="Yes" if db_info["revoked"] else "No", inline=True)
+        # Show hardware binding status
+        hwid = db_info.get("hwid")
+        if hwid:
+            embed.add_field(name="Hardware Bound", value=f"Yes (`{hwid[:8]}...`)", inline=True)
+        else:
+            embed.add_field(name="Hardware Bound", value="No (not activated)", inline=True)
     else:
         embed.add_field(name="In Database", value="No", inline=True)
 
@@ -328,6 +338,63 @@ async def check(interaction: discord.Interaction, key: str):
         embed.add_field(name="Error", value=info["error"], inline=False)
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="reset-hwid", description="Reset hardware binding for a license (allows activation on new PC)")
+@is_admin()
+@app_commands.describe(
+    key="The license key to reset (optional)",
+    user="The user whose license to reset (optional)"
+)
+async def reset_hwid(
+    interaction: discord.Interaction,
+    key: Optional[str] = None,
+    user: Optional[discord.User] = None
+):
+    """Reset hardware ID binding so the license can be activated on a new machine."""
+    if not key and not user:
+        await interaction.response.send_message(
+            "Please provide either a license key or a user.",
+            ephemeral=True
+        )
+        return
+
+    if key:
+        # Check current binding first
+        current_hwid = await get_hwid_by_key(key)
+        if not current_hwid:
+            await interaction.response.send_message(
+                "This license is not bound to any hardware yet.",
+                ephemeral=True
+            )
+            return
+
+        success = await reset_hwid_by_key(key)
+        if success:
+            await interaction.response.send_message(
+                f"Hardware binding reset for license `{key[:20]}...`\n"
+                f"Previous HWID: `{current_hwid[:12]}...`\n"
+                f"The user can now activate on a new PC.",
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                "License not found.",
+                ephemeral=True
+            )
+    else:
+        count = await reset_hwid_by_user(str(user.id))
+        if count > 0:
+            await interaction.response.send_message(
+                f"Reset hardware binding for {count} license(s) for {user.mention}.\n"
+                f"They can now activate on a new PC.",
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                f"{user.mention} has no licenses to reset.",
+                ephemeral=True
+            )
 
 
 # ==================== USER COMMANDS ====================
