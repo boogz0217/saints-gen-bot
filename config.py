@@ -21,3 +21,12 @@ DATABASE_PATH = os.getenv("DATABASE_PATH", "licenses.db")
 
 # Bot settings
 BOT_PREFIX = "!"  # Not used for slash commands, but kept for potential future use
+
+# Guild (Server) ID for role management
+GUILD_ID = int(os.getenv("GUILD_ID", "0"))
+
+# Role to give to active subscribers
+SUBSCRIBER_ROLE_ID = int(os.getenv("SUBSCRIBER_ROLE_ID", "0"))
+
+# Store URL for renewal
+STORE_URL = os.getenv("STORE_URL", "https://saintservice.store/")

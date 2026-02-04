@@ -16,12 +16,18 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 expires_at TIMESTAMP NOT NULL,
                 revoked INTEGER DEFAULT 0,
-                hwid TEXT
+                hwid TEXT,
+                expiry_notified INTEGER DEFAULT 0
             )
         """)
         await db.execute("""
             CREATE INDEX IF NOT EXISTS idx_discord_id ON licenses(discord_id)
         """)
+        # Add expiry_notified column if it doesn't exist (for existing databases)
+        try:
+            await db.execute("ALTER TABLE licenses ADD COLUMN expiry_notified INTEGER DEFAULT 0")
+        except:
+            pass  # Column already exists
         await db.commit()
 
 
@@ -259,3 +265,41 @@ async def get_hwid_by_key(license_key: str) -> Optional[str]:
             if row:
                 return row[0]
     return None
+
+
+async def get_newly_expired_licenses() -> List[Dict]:
+    """Get licenses that expired but haven't been notified yet."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        now = datetime.utcnow().isoformat()
+        async with db.execute(
+            """SELECT * FROM licenses
+               WHERE expires_at <= ? AND revoked = 0 AND expiry_notified = 0""",
+            (now,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+
+async def mark_expiry_notified(license_key: str) -> bool:
+    """Mark a license as having been notified about expiry."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "UPDATE licenses SET expiry_notified = 1 WHERE license_key = ?",
+            (license_key,)
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def has_active_license(discord_id: str) -> bool:
+    """Check if a user has any active (non-expired, non-revoked) license."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        now = datetime.utcnow().isoformat()
+        async with db.execute(
+            """SELECT COUNT(*) FROM licenses
+               WHERE discord_id = ? AND revoked = 0 AND expires_at > ?""",
+            (discord_id, now)
+        ) as cursor:
+            count = (await cursor.fetchone())[0]
+            return count > 0

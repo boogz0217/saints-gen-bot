@@ -4,17 +4,18 @@ Discord bot for managing subscription licenses.
 """
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 import asyncio
 from datetime import datetime
 from typing import Optional
 
-from config import DISCORD_TOKEN, ADMIN_IDS, SECRET_KEY
+from config import DISCORD_TOKEN, ADMIN_IDS, SECRET_KEY, GUILD_ID, SUBSCRIBER_ROLE_ID, STORE_URL
 from database import (
     init_db, add_license, get_license_by_key, get_license_by_user,
     revoke_license, revoke_user_licenses, delete_license, delete_user_licenses,
     extend_license, extend_user_license, get_all_active_licenses, get_license_stats,
-    reset_hwid_by_key, reset_hwid_by_user, get_hwid_by_key
+    reset_hwid_by_key, reset_hwid_by_user, get_hwid_by_key,
+    get_newly_expired_licenses, mark_expiry_notified, has_active_license
 )
 from license_crypto import generate_license_key, get_key_info
 
@@ -31,15 +32,88 @@ class LicenseBot(commands.Bot):
         # Sync slash commands globally and to specific guild for instant availability
         await self.tree.sync()
         # Instant sync to your server
-        guild = discord.Object(id=1290387028185448469)
-        self.tree.copy_global_to(guild=guild)
-        await self.tree.sync(guild=guild)
+        if GUILD_ID:
+            guild = discord.Object(id=GUILD_ID)
+            self.tree.copy_global_to(guild=guild)
+            await self.tree.sync(guild=guild)
         print(f"Synced slash commands")
+        # Start the expiry checker task
+        self.check_expired_licenses.start()
 
     async def on_ready(self):
         print(f"Logged in as {self.user} (ID: {self.user.id})")
         print(f"Admin IDs: {ADMIN_IDS}")
+        print(f"Guild ID: {GUILD_ID}")
+        print(f"Subscriber Role ID: {SUBSCRIBER_ROLE_ID}")
         print("------")
+
+    @tasks.loop(minutes=5)
+    async def check_expired_licenses(self):
+        """Background task to check for expired licenses and remove roles."""
+        await self.wait_until_ready()
+
+        if not GUILD_ID or not SUBSCRIBER_ROLE_ID:
+            return  # Role management not configured
+
+        try:
+            guild = self.get_guild(GUILD_ID)
+            if not guild:
+                print(f"Could not find guild {GUILD_ID}")
+                return
+
+            role = guild.get_role(SUBSCRIBER_ROLE_ID)
+            if not role:
+                print(f"Could not find role {SUBSCRIBER_ROLE_ID}")
+                return
+
+            # Get newly expired licenses
+            expired = await get_newly_expired_licenses()
+
+            for lic in expired:
+                discord_id = lic["discord_id"]
+
+                # Check if user has any other active licenses
+                still_active = await has_active_license(discord_id)
+
+                if not still_active:
+                    # Remove role from user
+                    try:
+                        member = await guild.fetch_member(int(discord_id))
+                        if member and role in member.roles:
+                            await member.remove_roles(role, reason="License expired")
+                            print(f"Removed subscriber role from {member} (license expired)")
+
+                            # DM the user
+                            try:
+                                embed = discord.Embed(
+                                    title="Subscription Expired",
+                                    description="Your Saint's Gen license has expired.",
+                                    color=discord.Color.red()
+                                )
+                                embed.add_field(
+                                    name="Renew Your Subscription",
+                                    value=f"To continue using Saint's Gen, please renew your subscription at:\n{STORE_URL}",
+                                    inline=False
+                                )
+                                embed.set_footer(text="Thank you for using Saint's Gen!")
+                                await member.send(embed=embed)
+                                print(f"Sent expiry DM to {member}")
+                            except discord.Forbidden:
+                                print(f"Could not DM {member} (DMs disabled)")
+                    except discord.NotFound:
+                        print(f"Member {discord_id} not found in guild")
+                    except Exception as e:
+                        print(f"Error processing expired license for {discord_id}: {e}")
+
+                # Mark as notified regardless
+                await mark_expiry_notified(lic["license_key"])
+
+        except Exception as e:
+            print(f"Error in check_expired_licenses: {e}")
+
+    @check_expired_licenses.before_loop
+    async def before_check_expired(self):
+        await self.wait_until_ready()
 
 
 bot = LicenseBot()
@@ -93,6 +167,20 @@ async def generate(interaction: discord.Interaction, user: discord.User, days: i
         )
         return
 
+    # Give subscriber role to user
+    role_added = False
+    if GUILD_ID and SUBSCRIBER_ROLE_ID:
+        try:
+            guild = bot.get_guild(GUILD_ID)
+            if guild:
+                member = await guild.fetch_member(user.id)
+                role = guild.get_role(SUBSCRIBER_ROLE_ID)
+                if member and role and role not in member.roles:
+                    await member.add_roles(role, reason="License generated")
+                    role_added = True
+        except Exception as e:
+            print(f"Could not add role to {user}: {e}")
+
     # Create embed response
     embed = discord.Embed(
         title="License Generated",
@@ -101,6 +189,8 @@ async def generate(interaction: discord.Interaction, user: discord.User, days: i
     embed.add_field(name="User", value=f"{user.mention} ({user.id})", inline=False)
     embed.add_field(name="Duration", value=f"{days} days", inline=True)
     embed.add_field(name="Expires", value=expires_at.strftime("%Y-%m-%d %H:%M UTC"), inline=True)
+    if role_added:
+        embed.add_field(name="Role", value="✅ Subscriber role added", inline=True)
     embed.add_field(name="License Key", value=f"```{license_key}```", inline=False)
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
