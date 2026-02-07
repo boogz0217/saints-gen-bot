@@ -155,8 +155,8 @@ async def generate(interaction: discord.Interaction, user: discord.User, days: i
         await interaction.response.send_message("Days must be at least 1.", ephemeral=True)
         return
 
-    if days > 365:
-        await interaction.response.send_message("Maximum is 365 days.", ephemeral=True)
+    if days > 36500:  # 100 years max
+        await interaction.response.send_message("Maximum is 36500 days (100 years).", ephemeral=True)
         return
 
     # Get user's avatar URL (if they have one)
