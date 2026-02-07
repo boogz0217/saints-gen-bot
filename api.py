@@ -4,28 +4,26 @@ Runs alongside the Discord bot to provide HTTP endpoints for the macro.
 """
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional
-from database import get_pool, init_db
+import asyncpg
+import os
 import traceback
 
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Initialize database on startup."""
-    print("API: Initializing database...")
-    try:
-        await init_db()
-        print("API: Database initialized successfully")
-    except Exception as e:
-        print(f"API: Database init error: {e}")
-        traceback.print_exc()
-    yield
-    print("API: Shutting down...")
+# API has its own database pool (separate from bot to avoid thread conflicts)
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+_api_pool: Optional[asyncpg.Pool] = None
 
 
-app = FastAPI(title="Saint's Gen License API", docs_url=None, redoc_url=None, lifespan=lifespan)
+async def get_api_pool() -> asyncpg.Pool:
+    """Get or create the API's own connection pool."""
+    global _api_pool
+    if _api_pool is None:
+        _api_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
+    return _api_pool
+
+
+app = FastAPI(title="Saint's Gen License API", docs_url=None, redoc_url=None)
 
 # Allow CORS for the macro to call
 app.add_middleware(
@@ -60,7 +58,7 @@ async def verify_license(key: str, hwid: Optional[str] = None, product: Optional
         return {"valid": False, "reason": "invalid_format"}
 
     try:
-        pool = await get_pool()
+        pool = await get_api_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT revoked, expires_at, hwid, product FROM licenses WHERE license_key = $1",
