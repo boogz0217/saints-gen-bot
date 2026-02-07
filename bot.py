@@ -9,14 +9,14 @@ import asyncio
 from datetime import datetime
 from typing import Optional
 
-from config import DISCORD_TOKEN, ADMIN_IDS, SECRET_KEY, GUILD_ID, SUBSCRIBER_ROLE_ID, STORE_URL
+from config import DISCORD_TOKEN, ADMIN_IDS, SECRET_KEY, GUILD_ID, SUBSCRIBER_ROLE_ID, SAINTS_SHOT_ROLE_ID, STORE_URL
 from database import (
     init_db, add_license, get_license_by_key, get_license_by_user,
     revoke_license, revoke_user_licenses, delete_license, delete_user_licenses,
     extend_license, extend_user_license, get_all_active_licenses, get_license_stats,
     reset_hwid_by_key, reset_hwid_by_user, get_hwid_by_key,
     get_newly_expired_licenses, mark_expiry_notified, has_active_license,
-    close_pool
+    has_active_license_for_product, close_pool
 )
 from license_crypto import generate_license_key, get_key_info
 
@@ -46,6 +46,7 @@ class LicenseBot(commands.Bot):
         print(f"Admin IDs: {ADMIN_IDS}")
         print(f"Guild ID: {GUILD_ID}")
         print(f"Subscriber Role ID: {SUBSCRIBER_ROLE_ID}")
+        print(f"Saint's Shot Role ID: {SAINTS_SHOT_ROLE_ID}")
         print("------")
 
     async def close(self):
@@ -58,7 +59,7 @@ class LicenseBot(commands.Bot):
         """Background task to check for expired licenses and remove roles."""
         await self.wait_until_ready()
 
-        if not GUILD_ID or not SUBSCRIBER_ROLE_ID:
+        if not GUILD_ID:
             return  # Role management not configured
 
         try:
@@ -67,41 +68,52 @@ class LicenseBot(commands.Bot):
                 print(f"Could not find guild {GUILD_ID}")
                 return
 
-            role = guild.get_role(SUBSCRIBER_ROLE_ID)
-            if not role:
-                print(f"Could not find role {SUBSCRIBER_ROLE_ID}")
-                return
-
             # Get newly expired licenses
             expired = await get_newly_expired_licenses()
 
             for lic in expired:
                 discord_id = lic["discord_id"]
+                product = lic.get("product", "saints-gen")
 
-                # Check if user has any other active licenses
-                still_active = await has_active_license(discord_id)
+                # Determine which role to check based on product
+                role_id = SAINTS_SHOT_ROLE_ID if product == "saints-shot" else SUBSCRIBER_ROLE_ID
+                product_name = "Saint's Shot" if product == "saints-shot" else "Saint's Gen"
+
+                if not role_id:
+                    # Mark as notified and skip if role not configured
+                    await mark_expiry_notified(lic["license_key"])
+                    continue
+
+                role = guild.get_role(role_id)
+                if not role:
+                    print(f"Could not find role {role_id} for {product}")
+                    await mark_expiry_notified(lic["license_key"])
+                    continue
+
+                # Check if user has any other active licenses for this product
+                still_active = await has_active_license_for_product(discord_id, product)
 
                 if not still_active:
                     # Remove role from user
                     try:
                         member = await guild.fetch_member(int(discord_id))
                         if member and role in member.roles:
-                            await member.remove_roles(role, reason="License expired")
-                            print(f"Removed subscriber role from {member} (license expired)")
+                            await member.remove_roles(role, reason=f"{product_name} license expired")
+                            print(f"Removed {product_name} role from {member} (license expired)")
 
                             # DM the user
                             try:
                                 embed = discord.Embed(
                                     title="Subscription Expired",
-                                    description="Your Saint's Gen license has expired.",
+                                    description=f"Your {product_name} license has expired.",
                                     color=discord.Color.red()
                                 )
                                 embed.add_field(
                                     name="Renew Your Subscription",
-                                    value=f"To continue using Saint's Gen, please renew your subscription at:\n{STORE_URL}",
+                                    value=f"To continue using {product_name}, please renew your subscription at:\n{STORE_URL}",
                                     inline=False
                                 )
-                                embed.set_footer(text="Thank you for using Saint's Gen!")
+                                embed.set_footer(text=f"Thank you for using {product_name}!")
                                 await member.send(embed=embed)
                                 print(f"Sent expiry DM to {member}")
                             except discord.Forbidden:
@@ -183,16 +195,17 @@ async def generate(interaction: discord.Interaction, user: discord.User, days: i
         )
         return
 
-    # Give subscriber role to user
+    # Give appropriate role based on product
     role_added = False
-    if GUILD_ID and SUBSCRIBER_ROLE_ID:
+    role_id = SAINTS_SHOT_ROLE_ID if product == "saints-shot" else SUBSCRIBER_ROLE_ID
+    if GUILD_ID and role_id:
         try:
             guild = bot.get_guild(GUILD_ID)
             if guild:
                 member = await guild.fetch_member(user.id)
-                role = guild.get_role(SUBSCRIBER_ROLE_ID)
+                role = guild.get_role(role_id)
                 if member and role and role not in member.roles:
-                    await member.add_roles(role, reason="License generated")
+                    await member.add_roles(role, reason=f"License generated for {product}")
                     role_added = True
         except Exception as e:
             print(f"Could not add role to {user}: {e}")

@@ -362,3 +362,16 @@ async def has_active_license(discord_id: str) -> bool:
             discord_id, now
         )
         return count > 0
+
+
+async def has_active_license_for_product(discord_id: str, product: str) -> bool:
+    """Check if a user has any active (non-expired, non-revoked) license for a specific product."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        now = datetime.utcnow()
+        count = await conn.fetchval(
+            """SELECT COUNT(*) FROM licenses
+               WHERE discord_id = $1 AND product = $2 AND revoked = 0 AND expires_at > $3""",
+            discord_id, product, now
+        )
+        return count > 0
