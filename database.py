@@ -52,9 +52,6 @@ async def init_db():
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_discord_id ON licenses(discord_id)
         """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_product ON licenses(product)
-        """)
         # Add columns if they don't exist (for existing databases)
         try:
             await conn.execute("ALTER TABLE licenses ADD COLUMN IF NOT EXISTS expiry_notified INTEGER DEFAULT 0")
@@ -62,6 +59,13 @@ async def init_db():
             pass
         try:
             await conn.execute("ALTER TABLE licenses ADD COLUMN IF NOT EXISTS product TEXT DEFAULT 'saints-gen'")
+        except:
+            pass
+        # Create product index after ensuring column exists
+        try:
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_product ON licenses(product)
+            """)
         except:
             pass
 
