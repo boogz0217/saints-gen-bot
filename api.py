@@ -4,11 +4,28 @@ Runs alongside the Discord bot to provide HTTP endpoints for the macro.
 """
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional
-from database import get_pool
+from database import get_pool, init_db
+import traceback
 
-app = FastAPI(title="Saint's Gen License API", docs_url=None, redoc_url=None)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize database on startup."""
+    print("API: Initializing database...")
+    try:
+        await init_db()
+        print("API: Database initialized successfully")
+    except Exception as e:
+        print(f"API: Database init error: {e}")
+        traceback.print_exc()
+    yield
+    print("API: Shutting down...")
+
+
+app = FastAPI(title="Saint's Gen License API", docs_url=None, redoc_url=None, lifespan=lifespan)
 
 # Allow CORS for the macro to call
 app.add_middleware(
@@ -88,7 +105,8 @@ async def verify_license(key: str, hwid: Optional[str] = None, product: Optional
         # On database error, fail open (allow access)
         # This prevents lockout if database is temporarily unavailable
         print(f"Database error in verify: {e}")
-        return {"valid": True, "reason": "db_error"}
+        traceback.print_exc()
+        return {"valid": True, "reason": "db_error", "error": str(e)}
 
 
 @app.get("/health")
