@@ -4,10 +4,9 @@ Runs alongside the Discord bot to provide HTTP endpoints for the macro.
 """
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-import aiosqlite
 from datetime import datetime
 from typing import Optional
-from config import DATABASE_PATH
+from database import get_pool
 
 app = FastAPI(title="Saint's Gen License API", docs_url=None, redoc_url=None)
 
@@ -43,46 +42,47 @@ async def verify_license(key: str, hwid: Optional[str] = None):
         return {"valid": False, "reason": "invalid_format"}
 
     try:
-        async with aiosqlite.connect(DATABASE_PATH) as db:
-            db.row_factory = aiosqlite.Row
-            async with db.execute(
-                "SELECT revoked, expires_at, hwid FROM licenses WHERE license_key = ?",
-                (key,)
-            ) as cursor:
-                row = await cursor.fetchone()
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT revoked, expires_at, hwid FROM licenses WHERE license_key = $1",
+                key
+            )
 
-                if not row:
-                    return {"valid": False, "reason": "not_found"}
+            if not row:
+                return {"valid": False, "reason": "not_found"}
 
-                # Check if revoked
-                if row["revoked"]:
-                    return {"valid": False, "reason": "revoked"}
+            # Check if revoked
+            if row["revoked"]:
+                return {"valid": False, "reason": "revoked"}
 
-                # Check if expired
-                expires_at = datetime.fromisoformat(row["expires_at"])
-                if expires_at < datetime.utcnow():
-                    return {"valid": False, "reason": "expired"}
+            # Check if expired
+            expires_at = row["expires_at"]
+            if isinstance(expires_at, str):
+                expires_at = datetime.fromisoformat(expires_at)
+            if expires_at < datetime.utcnow():
+                return {"valid": False, "reason": "expired"}
 
-                # Check hardware ID binding
-                stored_hwid = row["hwid"]
-                if hwid:
-                    if stored_hwid is None:
-                        # First activation - bind to this hardware
-                        await db.execute(
-                            "UPDATE licenses SET hwid = ? WHERE license_key = ?",
-                            (hwid, key)
-                        )
-                        await db.commit()
-                        return {"valid": True, "reason": "activated", "bound": True}
-                    elif stored_hwid != hwid:
-                        # Hardware mismatch - license used on different machine
-                        return {"valid": False, "reason": "hwid_mismatch"}
+            # Check hardware ID binding
+            stored_hwid = row["hwid"]
+            if hwid:
+                if stored_hwid is None:
+                    # First activation - bind to this hardware
+                    await conn.execute(
+                        "UPDATE licenses SET hwid = $1 WHERE license_key = $2",
+                        hwid, key
+                    )
+                    return {"valid": True, "reason": "activated", "bound": True}
+                elif stored_hwid != hwid:
+                    # Hardware mismatch - license used on different machine
+                    return {"valid": False, "reason": "hwid_mismatch"}
 
-                return {"valid": True, "reason": "active"}
+            return {"valid": True, "reason": "active"}
 
     except Exception as e:
         # On database error, fail open (allow access)
         # This prevents lockout if database is temporarily unavailable
+        print(f"Database error in verify: {e}")
         return {"valid": True, "reason": "db_error"}
 
 

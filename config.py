@@ -16,8 +16,8 @@ ADMIN_IDS = [int(id.strip()) for id in ADMIN_IDS_STR.split(",") if id.strip()]
 # IMPORTANT: This must match the key in the macro app
 SECRET_KEY = os.getenv("SECRET_KEY", "84e1164ba91f2831011564f7883b7a73faadbe71f66c62089b61b8cedf997272")
 
-# Database path
-DATABASE_PATH = os.getenv("DATABASE_PATH", "licenses.db")
+# Database URL (PostgreSQL - Railway provides this automatically)
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 # Bot settings
 BOT_PREFIX = "!"  # Not used for slash commands, but kept for potential future use

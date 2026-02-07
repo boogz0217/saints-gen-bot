@@ -15,7 +15,8 @@ from database import (
     revoke_license, revoke_user_licenses, delete_license, delete_user_licenses,
     extend_license, extend_user_license, get_all_active_licenses, get_license_stats,
     reset_hwid_by_key, reset_hwid_by_user, get_hwid_by_key,
-    get_newly_expired_licenses, mark_expiry_notified, has_active_license
+    get_newly_expired_licenses, mark_expiry_notified, has_active_license,
+    close_pool
 )
 from license_crypto import generate_license_key, get_key_info
 
@@ -46,6 +47,11 @@ class LicenseBot(commands.Bot):
         print(f"Guild ID: {GUILD_ID}")
         print(f"Subscriber Role ID: {SUBSCRIBER_ROLE_ID}")
         print("------")
+
+    async def close(self):
+        """Clean up resources when bot shuts down."""
+        await close_pool()
+        await super().close()
 
     @tasks.loop(minutes=5)
     async def check_expired_licenses(self):
@@ -365,7 +371,9 @@ async def list_licenses(interaction: discord.Interaction):
 
     # Show up to 10 licenses in the embed
     for lic in licenses[:10]:
-        expires = datetime.fromisoformat(lic["expires_at"])
+        expires = lic["expires_at"]
+        if isinstance(expires, str):
+            expires = datetime.fromisoformat(expires)
         days_left = (expires - datetime.utcnow()).days
         hwid_status = "🔒" if lic.get("hwid") else "🔓"
         embed.add_field(
@@ -502,7 +510,9 @@ async def mykey(interaction: discord.Interaction):
         return
 
     # Check if expired
-    expires = datetime.fromisoformat(license_data["expires_at"])
+    expires = license_data["expires_at"]
+    if isinstance(expires, str):
+        expires = datetime.fromisoformat(expires)
     if expires < datetime.utcnow():
         await interaction.response.send_message(
             "Your license has expired. Contact an admin to renew.",
@@ -547,7 +557,9 @@ async def status(interaction: discord.Interaction):
             inline=False
         )
     else:
-        expires = datetime.fromisoformat(license_data["expires_at"])
+        expires = license_data["expires_at"]
+        if isinstance(expires, str):
+            expires = datetime.fromisoformat(expires)
         now = datetime.utcnow()
 
         if expires < now:
