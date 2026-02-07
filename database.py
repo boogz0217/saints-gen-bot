@@ -45,33 +45,42 @@ async def init_db():
                 expires_at TIMESTAMP NOT NULL,
                 revoked INTEGER DEFAULT 0,
                 hwid TEXT,
-                expiry_notified INTEGER DEFAULT 0
+                expiry_notified INTEGER DEFAULT 0,
+                product TEXT DEFAULT 'saints-gen'
             )
         """)
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_discord_id ON licenses(discord_id)
         """)
-        # Add expiry_notified column if it doesn't exist (for existing databases)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_product ON licenses(product)
+        """)
+        # Add columns if they don't exist (for existing databases)
         try:
             await conn.execute("ALTER TABLE licenses ADD COLUMN IF NOT EXISTS expiry_notified INTEGER DEFAULT 0")
         except:
-            pass  # Column already exists or syntax not supported
+            pass
+        try:
+            await conn.execute("ALTER TABLE licenses ADD COLUMN IF NOT EXISTS product TEXT DEFAULT 'saints-gen'")
+        except:
+            pass
 
 
 async def add_license(
     license_key: str,
     discord_id: str,
     discord_name: str,
-    expires_at: datetime
+    expires_at: datetime,
+    product: str = "saints-gen"
 ) -> bool:
     """Add a new license to the database."""
     try:
         pool = await get_pool()
         async with pool.acquire() as conn:
             await conn.execute(
-                """INSERT INTO licenses (license_key, discord_id, discord_name, expires_at)
-                   VALUES ($1, $2, $3, $4)""",
-                license_key, discord_id, discord_name, expires_at
+                """INSERT INTO licenses (license_key, discord_id, discord_name, expires_at, product)
+                   VALUES ($1, $2, $3, $4, $5)""",
+                license_key, discord_id, discord_name, expires_at, product
             )
         return True
     except asyncpg.UniqueViolationError:
@@ -91,16 +100,24 @@ async def get_license_by_key(license_key: str) -> Optional[Dict]:
     return None
 
 
-async def get_license_by_user(discord_id: str) -> Optional[Dict]:
-    """Get the most recent active license for a user."""
+async def get_license_by_user(discord_id: str, product: str = None) -> Optional[Dict]:
+    """Get the most recent active license for a user, optionally filtered by product."""
     pool = await get_pool()
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """SELECT * FROM licenses
-               WHERE discord_id = $1 AND revoked = 0
-               ORDER BY expires_at DESC LIMIT 1""",
-            discord_id
-        )
+        if product:
+            row = await conn.fetchrow(
+                """SELECT * FROM licenses
+                   WHERE discord_id = $1 AND revoked = 0 AND product = $2
+                   ORDER BY expires_at DESC LIMIT 1""",
+                discord_id, product
+            )
+        else:
+            row = await conn.fetchrow(
+                """SELECT * FROM licenses
+                   WHERE discord_id = $1 AND revoked = 0
+                   ORDER BY expires_at DESC LIMIT 1""",
+                discord_id
+            )
         if row:
             return dict(row)
     return None
@@ -205,45 +222,62 @@ async def extend_user_license(discord_id: str, days: int) -> Optional[str]:
         return await extend_license(row["license_key"], days)
 
 
-async def get_all_active_licenses() -> List[Dict]:
-    """Get all active (non-revoked, non-expired) licenses."""
+async def get_all_active_licenses(product: str = None) -> List[Dict]:
+    """Get all active (non-revoked, non-expired) licenses, optionally filtered by product."""
     pool = await get_pool()
     async with pool.acquire() as conn:
         now = datetime.utcnow()
-        rows = await conn.fetch(
-            """SELECT * FROM licenses
-               WHERE revoked = 0 AND expires_at > $1
-               ORDER BY expires_at ASC""",
-            now
-        )
+        if product:
+            rows = await conn.fetch(
+                """SELECT * FROM licenses
+                   WHERE revoked = 0 AND expires_at > $1 AND product = $2
+                   ORDER BY expires_at ASC""",
+                now, product
+            )
+        else:
+            rows = await conn.fetch(
+                """SELECT * FROM licenses
+                   WHERE revoked = 0 AND expires_at > $1
+                   ORDER BY expires_at ASC""",
+                now
+            )
         return [dict(row) for row in rows]
 
 
-async def get_license_stats() -> Dict:
-    """Get license statistics."""
+async def get_license_stats(product: str = None) -> Dict:
+    """Get license statistics, optionally filtered by product."""
     pool = await get_pool()
     async with pool.acquire() as conn:
         now = datetime.utcnow()
 
-        # Total licenses
-        total = await conn.fetchval("SELECT COUNT(*) FROM licenses")
-
-        # Active licenses
-        active = await conn.fetchval(
-            "SELECT COUNT(*) FROM licenses WHERE revoked = 0 AND expires_at > $1",
-            now
-        )
-
-        # Revoked licenses
-        revoked = await conn.fetchval(
-            "SELECT COUNT(*) FROM licenses WHERE revoked = 1"
-        )
-
-        # Expired licenses
-        expired = await conn.fetchval(
-            "SELECT COUNT(*) FROM licenses WHERE revoked = 0 AND expires_at <= $1",
-            now
-        )
+        if product:
+            total = await conn.fetchval(
+                "SELECT COUNT(*) FROM licenses WHERE product = $1", product
+            )
+            active = await conn.fetchval(
+                "SELECT COUNT(*) FROM licenses WHERE revoked = 0 AND expires_at > $1 AND product = $2",
+                now, product
+            )
+            revoked = await conn.fetchval(
+                "SELECT COUNT(*) FROM licenses WHERE revoked = 1 AND product = $1", product
+            )
+            expired = await conn.fetchval(
+                "SELECT COUNT(*) FROM licenses WHERE revoked = 0 AND expires_at <= $1 AND product = $2",
+                now, product
+            )
+        else:
+            total = await conn.fetchval("SELECT COUNT(*) FROM licenses")
+            active = await conn.fetchval(
+                "SELECT COUNT(*) FROM licenses WHERE revoked = 0 AND expires_at > $1",
+                now
+            )
+            revoked = await conn.fetchval(
+                "SELECT COUNT(*) FROM licenses WHERE revoked = 1"
+            )
+            expired = await conn.fetchval(
+                "SELECT COUNT(*) FROM licenses WHERE revoked = 0 AND expires_at <= $1",
+                now
+            )
 
         return {
             "total": total,

@@ -26,7 +26,7 @@ async def root():
 
 
 @app.get("/verify")
-async def verify_license(key: str, hwid: Optional[str] = None):
+async def verify_license(key: str, hwid: Optional[str] = None, product: Optional[str] = None):
     """
     Verify if a license key is valid and not revoked.
     Also checks hardware ID binding.
@@ -34,6 +34,7 @@ async def verify_license(key: str, hwid: Optional[str] = None):
     Query params:
         key: The license key to verify
         hwid: The hardware ID of the machine (optional but recommended)
+        product: The product to verify for (optional - saints-gen or saints-shot)
 
     Returns:
         {"valid": true/false, "reason": "..."}
@@ -45,12 +46,16 @@ async def verify_license(key: str, hwid: Optional[str] = None):
         pool = await get_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT revoked, expires_at, hwid FROM licenses WHERE license_key = $1",
+                "SELECT revoked, expires_at, hwid, product FROM licenses WHERE license_key = $1",
                 key
             )
 
             if not row:
                 return {"valid": False, "reason": "not_found"}
+
+            # Check if license is for the correct product
+            if product and row["product"] != product:
+                return {"valid": False, "reason": "wrong_product"}
 
             # Check if revoked
             if row["revoked"]:

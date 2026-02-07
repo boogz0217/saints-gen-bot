@@ -134,13 +134,22 @@ def is_admin():
 
 # ==================== ADMIN COMMANDS ====================
 
+# Product choices for the generate command
+PRODUCT_CHOICES = [
+    app_commands.Choice(name="Saint's Gen", value="saints-gen"),
+    app_commands.Choice(name="Saint's Shot", value="saints-shot"),
+]
+
+
 @bot.tree.command(name="generate", description="Generate a license key for a user")
 @is_admin()
 @app_commands.describe(
     user="The Discord user to generate a key for",
-    days="Number of days until the license expires"
+    days="Number of days until the license expires",
+    product="Which product to generate a license for"
 )
-async def generate(interaction: discord.Interaction, user: discord.User, days: int):
+@app_commands.choices(product=PRODUCT_CHOICES)
+async def generate(interaction: discord.Interaction, user: discord.User, days: int, product: str = "saints-gen"):
     """Generate a new license key for a user."""
     if days < 1:
         await interaction.response.send_message("Days must be at least 1.", ephemeral=True)
@@ -163,7 +172,8 @@ async def generate(interaction: discord.Interaction, user: discord.User, days: i
         license_key=license_key,
         discord_id=str(user.id),
         discord_name=str(user),
-        expires_at=expires_at
+        expires_at=expires_at,
+        product=product
     )
 
     if not success:
@@ -187,16 +197,20 @@ async def generate(interaction: discord.Interaction, user: discord.User, days: i
         except Exception as e:
             print(f"Could not add role to {user}: {e}")
 
+    # Product display name
+    product_name = "Saint's Gen" if product == "saints-gen" else "Saint's Shot"
+
     # Create embed response
     embed = discord.Embed(
         title="License Generated",
         color=discord.Color.green()
     )
+    embed.add_field(name="Product", value=product_name, inline=True)
     embed.add_field(name="User", value=f"{user.mention} ({user.id})", inline=False)
     embed.add_field(name="Duration", value=f"{days} days", inline=True)
     embed.add_field(name="Expires", value=expires_at.strftime("%Y-%m-%d %H:%M UTC"), inline=True)
     if role_added:
-        embed.add_field(name="Role", value="✅ Subscriber role added", inline=True)
+        embed.add_field(name="Role", value="Subscriber role added", inline=True)
     embed.add_field(name="License Key", value=f"```{license_key}```", inline=False)
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -204,7 +218,7 @@ async def generate(interaction: discord.Interaction, user: discord.User, days: i
     # Try to DM the user their key
     try:
         user_embed = discord.Embed(
-            title="Your Saint's Gen License",
+            title=f"Your {product_name} License",
             description="Your license key has been generated!",
             color=discord.Color.blue()
         )
@@ -212,7 +226,7 @@ async def generate(interaction: discord.Interaction, user: discord.User, days: i
         user_embed.add_field(name="Expires", value=expires_at.strftime("%Y-%m-%d %H:%M UTC"), inline=False)
         user_embed.add_field(
             name="How to Activate",
-            value="1. Open Saint's Gen\n2. Enter the license key when prompted\n3. Click Activate",
+            value=f"1. Open {product_name}\n2. Enter the license key when prompted\n3. Click Activate",
             inline=False
         )
         await user.send(embed=user_embed)
@@ -356,16 +370,23 @@ async def extend(
 
 @bot.tree.command(name="list", description="List all active licenses")
 @is_admin()
-async def list_licenses(interaction: discord.Interaction):
+@app_commands.describe(product="Filter by product (optional)")
+@app_commands.choices(product=PRODUCT_CHOICES)
+async def list_licenses(interaction: discord.Interaction, product: str = None):
     """List all active licenses."""
-    licenses = await get_all_active_licenses()
+    licenses = await get_all_active_licenses(product)
 
     if not licenses:
         await interaction.response.send_message("No active licenses.", ephemeral=True)
         return
 
+    title = "Active Licenses"
+    if product:
+        product_name = "Saint's Gen" if product == "saints-gen" else "Saint's Shot"
+        title = f"Active {product_name} Licenses"
+
     embed = discord.Embed(
-        title="Active Licenses",
+        title=title,
         color=discord.Color.blue()
     )
 
@@ -376,8 +397,9 @@ async def list_licenses(interaction: discord.Interaction):
             expires = datetime.fromisoformat(expires)
         days_left = (expires - datetime.utcnow()).days
         hwid_status = "🔒" if lic.get("hwid") else "🔓"
+        prod_tag = "[Gen]" if lic.get("product") == "saints-gen" else "[Shot]"
         embed.add_field(
-            name=f"{hwid_status} {lic['discord_name']}",
+            name=f"{hwid_status} {prod_tag} {lic['discord_name']}",
             value=f"Expires: {expires.strftime('%Y-%m-%d')} ({days_left}d left)",
             inline=True
         )
@@ -388,7 +410,7 @@ async def list_licenses(interaction: discord.Interaction):
         embed.set_footer(text="🔒 = hardware bound | 🔓 = not yet activated")
 
     # Add stats
-    stats = await get_license_stats()
+    stats = await get_license_stats(product)
     embed.description = f"**Stats:** {stats['active']} active, {stats['expired']} expired, {stats['revoked']} revoked"
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -422,6 +444,10 @@ async def check(interaction: discord.Interaction, key: str):
 
     if db_info:
         embed.add_field(name="In Database", value="Yes", inline=True)
+        # Show product
+        prod = db_info.get("product", "saints-gen")
+        prod_name = "Saint's Gen" if prod == "saints-gen" else "Saint's Shot"
+        embed.add_field(name="Product", value=prod_name, inline=True)
         embed.add_field(name="Revoked", value="Yes" if db_info["revoked"] else "No", inline=True)
         # Show hardware binding status
         hwid = db_info.get("hwid")
@@ -498,9 +524,11 @@ async def reset_hwid(
 # ==================== USER COMMANDS ====================
 
 @bot.tree.command(name="mykey", description="Get your license key (sent via DM)")
-async def mykey(interaction: discord.Interaction):
+@app_commands.describe(product="Which product's license to retrieve (optional)")
+@app_commands.choices(product=PRODUCT_CHOICES)
+async def mykey(interaction: discord.Interaction, product: str = None):
     """Send the user their license key via DM."""
-    license_data = await get_license_by_user(str(interaction.user.id))
+    license_data = await get_license_by_user(str(interaction.user.id), product)
 
     if not license_data:
         await interaction.response.send_message(
@@ -520,10 +548,14 @@ async def mykey(interaction: discord.Interaction):
         )
         return
 
+    # Get product name
+    prod = license_data.get("product", "saints-gen")
+    prod_name = "Saint's Gen" if prod == "saints-gen" else "Saint's Shot"
+
     # Try to DM the key
     try:
         embed = discord.Embed(
-            title="Your Saint's Gen License",
+            title=f"Your {prod_name} License",
             color=discord.Color.blue()
         )
         embed.add_field(name="License Key", value=f"```{license_data['license_key']}```", inline=False)
@@ -542,9 +574,11 @@ async def mykey(interaction: discord.Interaction):
 
 
 @bot.tree.command(name="status", description="Check your subscription status")
-async def status(interaction: discord.Interaction):
+@app_commands.describe(product="Which product to check status for (optional)")
+@app_commands.choices(product=PRODUCT_CHOICES)
+async def status(interaction: discord.Interaction, product: str = None):
     """Check subscription status."""
-    license_data = await get_license_by_user(str(interaction.user.id))
+    license_data = await get_license_by_user(str(interaction.user.id), product)
 
     embed = discord.Embed(title="Subscription Status")
 
@@ -557,6 +591,10 @@ async def status(interaction: discord.Interaction):
             inline=False
         )
     else:
+        # Get product name
+        prod = license_data.get("product", "saints-gen")
+        prod_name = "Saint's Gen" if prod == "saints-gen" else "Saint's Shot"
+
         expires = license_data["expires_at"]
         if isinstance(expires, str):
             expires = datetime.fromisoformat(expires)
@@ -564,12 +602,12 @@ async def status(interaction: discord.Interaction):
 
         if expires < now:
             embed.color = discord.Color.red()
-            embed.description = "Your license has **expired**."
+            embed.description = f"Your **{prod_name}** license has **expired**."
             embed.add_field(name="Expired On", value=expires.strftime("%Y-%m-%d"), inline=True)
         else:
             days_left = (expires - now).days
             embed.color = discord.Color.green()
-            embed.description = "Your license is **active**."
+            embed.description = f"Your **{prod_name}** license is **active**."
             embed.add_field(name="Expires", value=expires.strftime("%Y-%m-%d"), inline=True)
             embed.add_field(name="Days Left", value=str(days_left), inline=True)
 
