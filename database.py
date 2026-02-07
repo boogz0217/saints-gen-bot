@@ -3,6 +3,7 @@ import asyncpg
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 import os
+import sys
 
 # Database URL from environment (Railway provides this automatically)
 DATABASE_URL = os.getenv("DATABASE_URL", "")
@@ -15,6 +16,10 @@ async def get_pool() -> asyncpg.Pool:
     """Get or create the connection pool."""
     global _pool
     if _pool is None:
+        if not DATABASE_URL:
+            print("ERROR: DATABASE_URL environment variable is not set!")
+            print("Please add a PostgreSQL database to your Railway project.")
+            sys.exit(1)
         _pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=10)
     return _pool
 
