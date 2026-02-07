@@ -1,9 +1,8 @@
 """
 Combined entry point for Discord bot and FastAPI license API.
-Runs both services in the same process.
+Runs both services in the same async event loop.
 """
 import asyncio
-import threading
 import uvicorn
 from bot import bot
 from api import app
@@ -14,20 +13,27 @@ import os
 PORT = int(os.environ.get("PORT", 8000))
 
 
-def run_api():
-    """Run the FastAPI server in a separate thread."""
-    uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="info")
+class Server(uvicorn.Server):
+    """Custom uvicorn server that doesn't block."""
+    def install_signal_handlers(self):
+        pass
+
+    async def serve_async(self):
+        await self.startup()
+        await self.main_loop()
 
 
 async def main():
-    """Start both the API server and Discord bot."""
-    # Start API in a background thread
-    api_thread = threading.Thread(target=run_api, daemon=True)
-    api_thread.start()
-    print(f"API server started on port {PORT}")
+    """Start both the API server and Discord bot in the same event loop."""
+    # Configure uvicorn
+    config = uvicorn.Config(app, host="0.0.0.0", port=PORT, log_level="info")
+    server = Server(config)
 
-    # Run the Discord bot
-    await bot.start(DISCORD_TOKEN)
+    # Run both concurrently
+    await asyncio.gather(
+        server.serve_async(),
+        bot.start(DISCORD_TOKEN)
+    )
 
 
 if __name__ == "__main__":
