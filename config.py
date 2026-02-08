@@ -33,3 +33,29 @@ SAINTS_SHOT_ROLE_ID = int(os.getenv("SAINTS_SHOT_ROLE_ID", "0"))
 
 # Store URL for renewal
 STORE_URL = os.getenv("STORE_URL", "https://saintservice.store/")
+
+# Shopify Integration
+SHOPIFY_WEBHOOK_SECRET = os.getenv("SHOPIFY_WEBHOOK_SECRET", "")  # From Shopify Admin > Webhooks
+SHOPIFY_PRODUCT_MAP = {
+    # Map Shopify product titles/handles to your license products
+    # The bot will match these strings (case-insensitive) against product title, handle, variant, or SKU
+
+    # Saint's Gen - 30 days monthly
+    "saint's gen": {"product": "saints-gen", "days": 30},
+    "saints gen": {"product": "saints-gen", "days": 30},
+    "saints-gen": {"product": "saints-gen", "days": 30},
+
+    # Saint's Shot - Weekly (7 days)
+    "shot weekly": {"product": "saints-shot", "days": 7},
+    "shot 7": {"product": "saints-shot", "days": 7},
+    "weekly": {"product": "saints-shot", "days": 7},
+
+    # Saint's Shot - Monthly (30 days)
+    "shot monthly": {"product": "saints-shot", "days": 30},
+    "shot month": {"product": "saints-shot", "days": 30},
+    "saint's shot": {"product": "saints-shot", "days": 30},  # Default to monthly if just "Saint's Shot"
+    "saints shot": {"product": "saints-shot", "days": 30},
+    "saints-shot": {"product": "saints-shot", "days": 30},
+}
+# Default license duration if product not in map (in days)
+DEFAULT_LICENSE_DAYS = 30

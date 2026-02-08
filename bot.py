@@ -6,8 +6,11 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 import asyncio
+import os
 from datetime import datetime
 from typing import Optional
+
+import aiohttp
 
 from config import DISCORD_TOKEN, ADMIN_IDS, SECRET_KEY, GUILD_ID, SUBSCRIBER_ROLE_ID, SAINTS_SHOT_ROLE_ID, STORE_URL
 from database import (
@@ -38,8 +41,9 @@ class LicenseBot(commands.Bot):
             self.tree.copy_global_to(guild=guild)
             await self.tree.sync(guild=guild)
         print(f"Synced slash commands")
-        # Start the expiry checker task
+        # Start background tasks
         self.check_expired_licenses.start()
+        self.process_shopify_notifications.start()
 
     async def on_ready(self):
         print(f"Logged in as {self.user} (ID: {self.user.id})")
@@ -132,6 +136,109 @@ class LicenseBot(commands.Bot):
     @check_expired_licenses.before_loop
     async def before_check_expired(self):
         await self.wait_until_ready()
+
+    @tasks.loop(seconds=10)
+    async def process_shopify_notifications(self):
+        """Background task to process pending Shopify order notifications."""
+        await self.wait_until_ready()
+
+        try:
+            # Get pending notifications from the API
+            port = int(os.getenv("PORT", 8080))
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"http://localhost:{port}/shopify/pending") as resp:
+                    if resp.status != 200:
+                        return
+                    data = await resp.json()
+
+            notifications = data.get("notifications", [])
+
+            for notif in notifications:
+                discord_id = notif.get("discord_id")
+                license_key = notif.get("license_key")
+                expires_at = notif.get("expires_at")
+                product = notif.get("product", "saints-gen")
+                customer_name = notif.get("customer_name", "Customer")
+                order_number = notif.get("order_number", "Unknown")
+
+                product_name = "Saint's Gen" if product == "saints-gen" else "Saint's Shot"
+
+                # Try to find the user and assign role
+                user = None
+                role_added = False
+
+                # Check if discord_id is numeric (user ID) or username
+                if discord_id.isdigit():
+                    try:
+                        user = await self.fetch_user(int(discord_id))
+                    except discord.NotFound:
+                        print(f"Could not find user with ID {discord_id}")
+                    except Exception as e:
+                        print(f"Error fetching user {discord_id}: {e}")
+
+                # Assign role if we have guild configured
+                if user and GUILD_ID:
+                    role_id = SAINTS_SHOT_ROLE_ID if product == "saints-shot" else SUBSCRIBER_ROLE_ID
+                    if role_id:
+                        try:
+                            guild = self.get_guild(GUILD_ID)
+                            if guild:
+                                member = await guild.fetch_member(user.id)
+                                role = guild.get_role(role_id)
+                                if member and role and role not in member.roles:
+                                    await member.add_roles(role, reason=f"Shopify order #{order_number}")
+                                    role_added = True
+                                    print(f"Added {product_name} role to {user}")
+                        except discord.NotFound:
+                            print(f"User {discord_id} not in guild")
+                        except Exception as e:
+                            print(f"Error adding role to {discord_id}: {e}")
+
+                # Send DM with license key
+                if user:
+                    try:
+                        embed = discord.Embed(
+                            title=f"Your {product_name} License",
+                            description=f"Thank you for your purchase! Order #{order_number}",
+                            color=discord.Color.green()
+                        )
+                        embed.add_field(
+                            name="License Key",
+                            value=f"```{license_key}```",
+                            inline=False
+                        )
+                        embed.add_field(
+                            name="Expires",
+                            value=expires_at.split("T")[0] if "T" in expires_at else expires_at,
+                            inline=True
+                        )
+                        embed.add_field(
+                            name="How to Activate",
+                            value=f"1. Open {product_name}\n2. Enter the license key when prompted\n3. Click Activate",
+                            inline=False
+                        )
+                        if role_added:
+                            embed.set_footer(text=f"Your {product_name} role has been added!")
+
+                        await user.send(embed=embed)
+                        print(f"Sent license DM to {user} for order #{order_number}")
+                    except discord.Forbidden:
+                        print(f"Could not DM {user} (DMs disabled)")
+                    except Exception as e:
+                        print(f"Error sending DM to {user}: {e}")
+                else:
+                    print(f"Could not deliver license for order #{order_number} - Discord user not found: {discord_id}")
+
+        except aiohttp.ClientError:
+            pass  # API not ready yet, will retry
+        except Exception as e:
+            print(f"Error processing Shopify notifications: {e}")
+
+    @process_shopify_notifications.before_loop
+    async def before_shopify_notifications(self):
+        await self.wait_until_ready()
+        # Wait a bit for API to start
+        await asyncio.sleep(5)
 
 
 bot = LicenseBot()
@@ -535,6 +642,32 @@ async def reset_hwid(
 
 
 # ==================== USER COMMANDS ====================
+
+@bot.tree.command(name="id", description="Get your Discord ID for checkout")
+async def get_id(interaction: discord.Interaction):
+    """Show the user their Discord ID for use at checkout."""
+    user = interaction.user
+
+    embed = discord.Embed(
+        title="Your Discord ID",
+        description="Use this ID when purchasing to receive your license automatically!",
+        color=discord.Color.blurple()
+    )
+    embed.add_field(
+        name="Your ID",
+        value=f"```{user.id}```",
+        inline=False
+    )
+    embed.add_field(
+        name="How to Use",
+        value="Copy the number above and paste it in the **Discord ID** field at checkout.",
+        inline=False
+    )
+    embed.set_thumbnail(url=user.display_avatar.url)
+    embed.set_footer(text="Your license key will be sent to you via DM after purchase!")
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
 
 @bot.tree.command(name="mykey", description="Get your license key (sent via DM)")
 @app_commands.describe(product="Which product's license to retrieve (optional)")
