@@ -375,3 +375,108 @@ async def has_active_license_for_product(discord_id: str, product: str) -> bool:
             discord_id, product, now
         )
         return count > 0
+
+
+# ==================== SHOPIFY NOTIFICATIONS ====================
+
+async def init_notifications_table():
+    """Create the shopify_notifications table if it doesn't exist."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS shopify_notifications (
+                id SERIAL PRIMARY KEY,
+                discord_id TEXT NOT NULL,
+                license_key TEXT NOT NULL,
+                expires_at TIMESTAMP NOT NULL,
+                product TEXT NOT NULL,
+                customer_name TEXT,
+                email TEXT,
+                order_number TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                delivered INTEGER DEFAULT 0,
+                delivery_attempts INTEGER DEFAULT 0,
+                last_attempt_at TIMESTAMP,
+                error_message TEXT
+            )
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_notifications_pending
+            ON shopify_notifications(delivered) WHERE delivered = 0
+        """)
+
+
+async def add_notification(
+    discord_id: str,
+    license_key: str,
+    expires_at: datetime,
+    product: str,
+    customer_name: str = None,
+    email: str = None,
+    order_number: str = None
+) -> int:
+    """Add a new notification to the queue. Returns the notification ID."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """INSERT INTO shopify_notifications
+               (discord_id, license_key, expires_at, product, customer_name, email, order_number)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)
+               RETURNING id""",
+            discord_id, license_key, expires_at, product, customer_name, email, order_number
+        )
+        return row["id"]
+
+
+async def get_pending_notifications(limit: int = 50) -> List[Dict]:
+    """Get pending notifications that haven't been delivered yet."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT * FROM shopify_notifications
+               WHERE delivered = 0 AND delivery_attempts < 5
+               ORDER BY created_at ASC
+               LIMIT $1""",
+            limit
+        )
+        return [dict(row) for row in rows]
+
+
+async def mark_notification_delivered(notification_id: int) -> bool:
+    """Mark a notification as successfully delivered."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            """UPDATE shopify_notifications
+               SET delivered = 1, last_attempt_at = $1
+               WHERE id = $2""",
+            datetime.utcnow(), notification_id
+        )
+        return result != "UPDATE 0"
+
+
+async def mark_notification_failed(notification_id: int, error: str = None) -> bool:
+    """Mark a notification attempt as failed (will retry later)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            """UPDATE shopify_notifications
+               SET delivery_attempts = delivery_attempts + 1,
+                   last_attempt_at = $1,
+                   error_message = $2
+               WHERE id = $3""",
+            datetime.utcnow(), error, notification_id
+        )
+        return result != "UPDATE 0"
+
+
+async def get_failed_notifications() -> List[Dict]:
+    """Get notifications that failed to deliver after max attempts."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT * FROM shopify_notifications
+               WHERE delivered = 0 AND delivery_attempts >= 5
+               ORDER BY created_at DESC"""
+        )
+        return [dict(row) for row in rows]

@@ -19,7 +19,8 @@ from database import (
     extend_license, extend_user_license, get_all_active_licenses, get_license_stats,
     reset_hwid_by_key, reset_hwid_by_user, get_hwid_by_key,
     get_newly_expired_licenses, mark_expiry_notified, has_active_license,
-    has_active_license_for_product, close_pool
+    has_active_license_for_product, close_pool, init_notifications_table,
+    get_pending_notifications, get_failed_notifications
 )
 from license_crypto import generate_license_key, get_key_info
 
@@ -33,6 +34,7 @@ class LicenseBot(commands.Bot):
     async def setup_hook(self):
         # Initialize database
         await init_db()
+        await init_notifications_table()
         # Sync slash commands globally and to specific guild for instant availability
         await self.tree.sync()
         # Instant sync to your server
@@ -143,7 +145,7 @@ class LicenseBot(commands.Bot):
         await self.wait_until_ready()
 
         try:
-            # Get pending notifications from the API
+            # Get pending notifications from the API (now stored in database!)
             port = int(os.getenv("PORT", 8080))
             async with aiohttp.ClientSession() as session:
                 async with session.get(f"http://localhost:{port}/shopify/pending") as resp:
@@ -154,6 +156,7 @@ class LicenseBot(commands.Bot):
             notifications = data.get("notifications", [])
 
             for notif in notifications:
+                notification_id = notif.get("id")  # Database ID for tracking
                 discord_id = notif.get("discord_id")
                 license_key = notif.get("license_key")
                 expires_at = notif.get("expires_at")
@@ -166,15 +169,21 @@ class LicenseBot(commands.Bot):
                 # Try to find the user and assign role
                 user = None
                 role_added = False
+                delivery_success = False
+                error_message = None
 
                 # Check if discord_id is numeric (user ID) or username
                 if discord_id.isdigit():
                     try:
                         user = await self.fetch_user(int(discord_id))
                     except discord.NotFound:
+                        error_message = f"User not found: {discord_id}"
                         print(f"Could not find user with ID {discord_id}")
                     except Exception as e:
+                        error_message = str(e)
                         print(f"Error fetching user {discord_id}: {e}")
+                else:
+                    error_message = f"Invalid Discord ID format: {discord_id}"
 
                 # Assign role if we have guild configured
                 if user and GUILD_ID:
@@ -209,7 +218,7 @@ class LicenseBot(commands.Bot):
                         )
                         embed.add_field(
                             name="Expires",
-                            value=expires_at.split("T")[0] if "T" in expires_at else expires_at,
+                            value=expires_at.split("T")[0] if "T" in str(expires_at) else str(expires_at),
                             inline=True
                         )
                         embed.add_field(
@@ -222,12 +231,33 @@ class LicenseBot(commands.Bot):
 
                         await user.send(embed=embed)
                         print(f"Sent license DM to {user} for order #{order_number}")
+                        delivery_success = True
                     except discord.Forbidden:
+                        error_message = "DMs disabled"
                         print(f"Could not DM {user} (DMs disabled)")
+                        # Still mark as success since the license exists and role was added
+                        delivery_success = True  # License is in DB, they can use /mykey
                     except Exception as e:
+                        error_message = str(e)
                         print(f"Error sending DM to {user}: {e}")
                 else:
                     print(f"Could not deliver license for order #{order_number} - Discord user not found: {discord_id}")
+
+                # Mark notification as delivered or failed in the database
+                if notification_id:
+                    try:
+                        async with aiohttp.ClientSession() as session:
+                            if delivery_success:
+                                await session.post(f"http://localhost:{port}/shopify/notification/{notification_id}/delivered")
+                                print(f"Marked notification {notification_id} as delivered")
+                            else:
+                                await session.post(
+                                    f"http://localhost:{port}/shopify/notification/{notification_id}/failed",
+                                    params={"error": error_message or "Unknown error"}
+                                )
+                                print(f"Marked notification {notification_id} as failed: {error_message}")
+                    except Exception as e:
+                        print(f"Error updating notification status: {e}")
 
         except aiohttp.ClientError:
             pass  # API not ready yet, will retry
@@ -639,6 +669,43 @@ async def reset_hwid(
                 f"{user.mention} has no licenses to reset.",
                 ephemeral=True
             )
+
+
+@bot.tree.command(name="pending-orders", description="View pending/failed Shopify order notifications")
+@is_admin()
+async def pending_orders(interaction: discord.Interaction):
+    """View pending and failed Shopify order notifications."""
+    pending = await get_pending_notifications()
+    failed = await get_failed_notifications()
+
+    embed = discord.Embed(
+        title="Shopify Order Notifications",
+        color=discord.Color.blue()
+    )
+
+    if pending:
+        pending_text = ""
+        for notif in pending[:5]:
+            pending_text += f"Order #{notif.get('order_number', 'N/A')} - <@{notif['discord_id']}> (Attempts: {notif.get('delivery_attempts', 0)})\n"
+        if len(pending) > 5:
+            pending_text += f"... and {len(pending) - 5} more"
+        embed.add_field(name=f"Pending ({len(pending)})", value=pending_text or "None", inline=False)
+    else:
+        embed.add_field(name="Pending", value="No pending notifications", inline=False)
+
+    if failed:
+        failed_text = ""
+        for notif in failed[:5]:
+            error = notif.get('error_message', 'Unknown')[:50]
+            failed_text += f"Order #{notif.get('order_number', 'N/A')} - {notif['discord_id']}\nError: {error}\n\n"
+        if len(failed) > 5:
+            failed_text += f"... and {len(failed) - 5} more"
+        embed.add_field(name=f"Failed ({len(failed)})", value=failed_text or "None", inline=False)
+    else:
+        embed.add_field(name="Failed", value="No failed notifications", inline=False)
+
+    embed.set_footer(text="Pending notifications retry automatically every 10 seconds")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 # ==================== USER COMMANDS ====================
