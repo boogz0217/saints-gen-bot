@@ -20,7 +20,9 @@ from database import (
     reset_hwid_by_key, reset_hwid_by_user, get_hwid_by_key,
     get_newly_expired_licenses, mark_expiry_notified, has_active_license,
     has_active_license_for_product, close_pool, init_notifications_table,
-    get_pending_notifications, get_failed_notifications
+    get_pending_notifications, get_failed_notifications, init_referrals_table,
+    get_referral_count_received, get_referral_count_given, has_been_referred_by,
+    add_referral, get_referral_stats, extend_user_license_for_product
 )
 from license_crypto import generate_license_key, get_key_info
 
@@ -35,6 +37,7 @@ class LicenseBot(commands.Bot):
         # Initialize database
         await init_db()
         await init_notifications_table()
+        await init_referrals_table()
         # Sync slash commands globally and to specific guild for instant availability
         await self.tree.sync()
         # Instant sync to your server
@@ -462,20 +465,23 @@ async def delete(
         )
 
 
-@bot.tree.command(name="extend", description="Add days to an existing license")
+@bot.tree.command(name="extend", description="Add or remove days from a license (use negative to remove)")
 @is_admin()
 @app_commands.describe(
-    days="Number of days to add",
-    key="The license key to extend (optional)",
-    user="The user whose license to extend (optional)"
+    days="Number of days to add (use negative to remove days, e.g. -5)",
+    key="The license key to modify (optional)",
+    user="The user whose license to modify (optional)",
+    product="Which product's license to modify (required when using user)"
 )
+@app_commands.choices(product=PRODUCT_CHOICES)
 async def extend(
     interaction: discord.Interaction,
     days: int,
     key: Optional[str] = None,
-    user: Optional[discord.User] = None
+    user: Optional[discord.User] = None,
+    product: Optional[str] = None
 ):
-    """Add days to an existing license."""
+    """Add or remove days from a license. Use negative days to reduce."""
     if not key and not user:
         await interaction.response.send_message(
             "Please provide either a license key or a user.",
@@ -483,19 +489,23 @@ async def extend(
         )
         return
 
-    if days < 1:
+    if days == 0:
         await interaction.response.send_message(
-            "Days must be at least 1.",
+            "Days cannot be 0.",
             ephemeral=True
         )
         return
+
+    # Determine action word based on positive/negative
+    action = "extended" if days > 0 else "reduced"
+    days_display = f"+{days}" if days > 0 else str(days)
 
     if key:
         new_expiry = await extend_license(key, days)
         if new_expiry:
             expiry_dt = datetime.fromisoformat(new_expiry)
             await interaction.response.send_message(
-                f"License extended by **{days} days**.\nNew expiry: **{expiry_dt.strftime('%Y-%m-%d %H:%M UTC')}**",
+                f"License {action} by **{days_display} days**.\nNew expiry: **{expiry_dt.strftime('%Y-%m-%d %H:%M UTC')}**",
                 ephemeral=True
             )
         else:
@@ -504,16 +514,25 @@ async def extend(
                 ephemeral=True
             )
     else:
-        new_expiry = await extend_user_license(str(user.id), days)
+        # When using user, product is required
+        if not product:
+            await interaction.response.send_message(
+                "Please select a product when modifying by user.",
+                ephemeral=True
+            )
+            return
+
+        new_expiry = await extend_user_license_for_product(str(user.id), days, product)
+        product_name = "Saint's Gen" if product == "saints-gen" else "Saint's Shot"
         if new_expiry:
             expiry_dt = datetime.fromisoformat(new_expiry)
             await interaction.response.send_message(
-                f"Extended {user.mention}'s license by **{days} days**.\nNew expiry: **{expiry_dt.strftime('%Y-%m-%d %H:%M UTC')}**",
+                f"{action.capitalize()} {user.mention}'s **{product_name}** license by **{days_display} days**.\nNew expiry: **{expiry_dt.strftime('%Y-%m-%d %H:%M UTC')}**",
                 ephemeral=True
             )
         else:
             await interaction.response.send_message(
-                f"{user.mention} has no license to extend.",
+                f"{user.mention} has no **{product_name}** license to modify.",
                 ephemeral=True
             )
 
@@ -883,6 +902,179 @@ async def balance(interaction: discord.Interaction, product: str = None):
 
     embed.set_thumbnail(url=interaction.user.display_avatar.url)
     await interaction.response.send_message(embed=embed)
+
+
+# ==================== REFERRAL SYSTEM ====================
+
+# Referral rewards for Saint's Shot (based on how many times the user has been referred)
+REFERRAL_REWARDS = {
+    1: 7,  # 1st referral: 7 days
+    2: 5,  # 2nd referral: 5 days
+    3: 2,  # 3rd referral: 2 days
+    4: 2,  # 4th referral: 2 days
+    5: 2,  # 5th referral: 2 days (cap)
+}
+MAX_REFERRALS = 5
+
+
+@bot.tree.command(name="referral", description="[Admin] Record a referral between two users for Saint's Shot")
+@is_admin()
+@app_commands.describe(
+    referrer="The user who referred someone",
+    referred="The user who was referred"
+)
+async def referral(interaction: discord.Interaction, referrer: discord.User, referred: discord.User):
+    """Record a referral between two users. Both get credit - referrer gets +1 to their given count, referred gets days."""
+    product = "saints-shot"
+    product_name = "Saint's Shot"
+
+    # Can't refer yourself
+    if referrer.id == referred.id:
+        await interaction.response.send_message(
+            "A user cannot refer themselves!",
+            ephemeral=True
+        )
+        return
+
+    # Check if referred user has an active Saint's Shot license
+    has_license = await has_active_license_for_product(str(referred.id), product)
+    if not has_license:
+        await interaction.response.send_message(
+            f"{referred.mention} needs an active **{product_name}** license to receive referral bonus.",
+            ephemeral=True
+        )
+        return
+
+    # Check if already referred by this person
+    already_referred = await has_been_referred_by(str(referred.id), str(referrer.id), product)
+    if already_referred:
+        await interaction.response.send_message(
+            f"{referred.mention} has already been referred by {referrer.mention}!",
+            ephemeral=True
+        )
+        return
+
+    # Check how many times the referred user has been referred (cap at 5)
+    times_referred = await get_referral_count_received(str(referred.id), product)
+    if times_referred >= MAX_REFERRALS:
+        await interaction.response.send_message(
+            f"{referred.mention} has reached the maximum of **{MAX_REFERRALS}** referrals.",
+            ephemeral=True
+        )
+        return
+
+    # Calculate days to award based on referral number
+    referral_number = times_referred + 1
+    days_awarded = REFERRAL_REWARDS.get(referral_number, 2)
+
+    # Extend the referred user's license
+    new_expiry = await extend_user_license_for_product(str(referred.id), days_awarded, product)
+    if not new_expiry:
+        await interaction.response.send_message(
+            f"Could not extend {referred.mention}'s license.",
+            ephemeral=True
+        )
+        return
+
+    # Record the referral (this tracks both users)
+    success = await add_referral(str(referrer.id), str(referred.id), days_awarded, product)
+    if not success:
+        await interaction.response.send_message(
+            f"Failed to record referral.",
+            ephemeral=True
+        )
+        return
+
+    # Get stats for both users
+    referrer_stats = await get_referral_stats(str(referrer.id), product)
+    referred_stats = await get_referral_stats(str(referred.id), product)
+
+    # Parse expiry date
+    expiry_dt = datetime.fromisoformat(new_expiry)
+
+    # Create success embed
+    embed = discord.Embed(
+        title="🎉 Referral Recorded!",
+        description=f"{referrer.mention} referred {referred.mention}",
+        color=discord.Color.green()
+    )
+    embed.add_field(name="Days Awarded", value=f"**+{days_awarded} days** to {referred.mention}", inline=False)
+    embed.add_field(name="Referral #", value=f"{referral_number} of {MAX_REFERRALS}", inline=True)
+    embed.add_field(name="New Expiry", value=expiry_dt.strftime("%Y-%m-%d %H:%M UTC"), inline=True)
+    embed.add_field(
+        name=f"{referrer.name}'s Stats",
+        value=f"Referrals Given: **{referrer_stats['given']}**",
+        inline=True
+    )
+    embed.add_field(
+        name=f"{referred.name}'s Stats",
+        value=f"Referrals Used: **{referred_stats['received']}/{MAX_REFERRALS}**\nTotal Days Earned: **+{referred_stats['total_days_earned']}**",
+        inline=True
+    )
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # Try to notify both users
+    try:
+        referrer_embed = discord.Embed(
+            title="🎁 Referral Recorded!",
+            description=f"You referred {referred.mention}!",
+            color=discord.Color.blue()
+        )
+        referrer_embed.add_field(name="Your Total Referrals Given", value=str(referrer_stats['given']), inline=True)
+        await referrer.send(embed=referrer_embed)
+    except discord.Forbidden:
+        pass
+
+    try:
+        referred_embed = discord.Embed(
+            title="🎉 Referral Bonus!",
+            description=f"You were referred by {referrer.mention}!",
+            color=discord.Color.green()
+        )
+        referred_embed.add_field(name="Days Added", value=f"+{days_awarded} days", inline=True)
+        referred_embed.add_field(name="New Expiry", value=expiry_dt.strftime("%Y-%m-%d"), inline=True)
+        referred_embed.add_field(name="Referrals Used", value=f"{referred_stats['received']}/{MAX_REFERRALS}", inline=True)
+        await referred.send(embed=referred_embed)
+    except discord.Forbidden:
+        pass
+
+
+@bot.tree.command(name="referral-stats", description="Check your referral statistics")
+async def referral_stats(interaction: discord.Interaction):
+    """Check your referral statistics for Saint's Shot."""
+    user = interaction.user
+    product = "saints-shot"
+    product_name = "Saint's Shot"
+
+    stats = await get_referral_stats(str(user.id), product)
+
+    embed = discord.Embed(
+        title=f"📊 Your {product_name} Referral Stats",
+        color=discord.Color.blue()
+    )
+    embed.add_field(name="Referrals Given", value=str(stats['given']), inline=True)
+    embed.add_field(name="Referrals Used", value=f"{stats['received']} / {MAX_REFERRALS}", inline=True)
+    embed.add_field(name="Total Days Earned", value=f"+{stats['total_days_earned']} days", inline=True)
+
+    # Show remaining referrals
+    remaining = MAX_REFERRALS - stats['received']
+    if remaining > 0:
+        next_reward = REFERRAL_REWARDS.get(stats['received'] + 1, 2)
+        embed.add_field(
+            name="Referrals Available",
+            value=f"You can use **{remaining}** more referral(s)\nNext referral: +{next_reward} days",
+            inline=False
+        )
+    else:
+        embed.add_field(
+            name="Referrals Available",
+            value="You have used all 5 referrals!",
+            inline=False
+        )
+
+    embed.set_thumbnail(url=user.display_avatar.url)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 # ==================== ERROR HANDLING ====================

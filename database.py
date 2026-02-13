@@ -185,7 +185,7 @@ async def delete_user_licenses(discord_id: str) -> int:
 
 
 async def extend_license(license_key: str, days: int) -> Optional[str]:
-    """Extend a license by adding days. Returns new expiry date or None if not found."""
+    """Extend or reduce a license by adding/removing days. Returns new expiry date or None if not found."""
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -201,8 +201,13 @@ async def extend_license(license_key: str, days: int) -> Optional[str]:
             current_expiry = datetime.fromisoformat(current_expiry)
         now = datetime.utcnow()
 
-        # If already expired, extend from now; otherwise extend from current expiry
-        base = max(current_expiry, now)
+        if days > 0:
+            # If adding days and already expired, extend from now; otherwise extend from current expiry
+            base = max(current_expiry, now)
+        else:
+            # If removing days, always use current expiry
+            base = current_expiry
+
         new_expiry = base + timedelta(days=days)
 
         await conn.execute(
@@ -480,3 +485,113 @@ async def get_failed_notifications() -> List[Dict]:
                ORDER BY created_at DESC"""
         )
         return [dict(row) for row in rows]
+
+
+# ==================== REFERRALS ====================
+
+async def init_referrals_table():
+    """Create the referrals table if it doesn't exist."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS referrals (
+                id SERIAL PRIMARY KEY,
+                referrer_id TEXT NOT NULL,
+                referred_id TEXT NOT NULL,
+                product TEXT NOT NULL DEFAULT 'saints-shot',
+                days_awarded INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(referrer_id, referred_id, product)
+            )
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_id)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_referrals_referred ON referrals(referred_id)
+        """)
+
+
+async def get_referral_count_received(discord_id: str, product: str = "saints-shot") -> int:
+    """Get how many times a user has been referred (received referrals)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        count = await conn.fetchval(
+            "SELECT COUNT(*) FROM referrals WHERE referred_id = $1 AND product = $2",
+            discord_id, product
+        )
+        return count or 0
+
+
+async def get_referral_count_given(discord_id: str, product: str = "saints-shot") -> int:
+    """Get how many referrals a user has given (referred others)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        count = await conn.fetchval(
+            "SELECT COUNT(*) FROM referrals WHERE referrer_id = $1 AND product = $2",
+            discord_id, product
+        )
+        return count or 0
+
+
+async def has_been_referred_by(referred_id: str, referrer_id: str, product: str = "saints-shot") -> bool:
+    """Check if a user has already been referred by a specific referrer."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        count = await conn.fetchval(
+            "SELECT COUNT(*) FROM referrals WHERE referred_id = $1 AND referrer_id = $2 AND product = $3",
+            referred_id, referrer_id, product
+        )
+        return count > 0
+
+
+async def add_referral(referrer_id: str, referred_id: str, days_awarded: int, product: str = "saints-shot") -> bool:
+    """Add a new referral record. Returns True if successful."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO referrals (referrer_id, referred_id, product, days_awarded)
+                   VALUES ($1, $2, $3, $4)""",
+                referrer_id, referred_id, product, days_awarded
+            )
+        return True
+    except Exception:
+        return False  # Duplicate or other error
+
+
+async def get_referral_stats(discord_id: str, product: str = "saints-shot") -> Dict:
+    """Get referral statistics for a user."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        given = await conn.fetchval(
+            "SELECT COUNT(*) FROM referrals WHERE referrer_id = $1 AND product = $2",
+            discord_id, product
+        )
+        received = await conn.fetchval(
+            "SELECT COUNT(*) FROM referrals WHERE referred_id = $1 AND product = $2",
+            discord_id, product
+        )
+        total_days_earned = await conn.fetchval(
+            "SELECT COALESCE(SUM(days_awarded), 0) FROM referrals WHERE referred_id = $1 AND product = $2",
+            discord_id, product
+        )
+        return {
+            "given": given or 0,
+            "received": received or 0,
+            "total_days_earned": total_days_earned or 0
+        }
+
+
+async def extend_user_license_for_product(discord_id: str, days: int, product: str) -> Optional[str]:
+    """Extend the most recent license for a user for a specific product. Returns new expiry date or None."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT license_key, expires_at FROM licenses WHERE discord_id = $1 AND product = $2 ORDER BY expires_at DESC LIMIT 1",
+            discord_id, product
+        )
+        if not row:
+            return None
+
+        return await extend_license(row["license_key"], days)
