@@ -909,7 +909,7 @@ async def balance(interaction: discord.Interaction, product: str = None):
 # Referral rewards for Saint's Shot (based on how many times the user has been referred)
 REFERRAL_REWARDS = {
     1: 7,  # 1st referral: 7 days
-    2: 3,  # 2nd referral: 3 days
+    2: 2,  # 2nd referral: 2 days
     3: 2,  # 3rd referral: 2 days
     4: 2,  # 4th referral: 2 days
     5: 2,  # 5th referral: 2 days (cap)
