@@ -588,8 +588,8 @@ async def health():
 # ==================== VERSION CHECK ====================
 
 # Update these when releasing new versions
-CURRENT_VERSION = "2.2.0"  # Latest version available
-MIN_VERSION = "2.2.0"  # Minimum version allowed (older versions will be blocked)
+CURRENT_VERSION = "2.1.0"  # Latest version available
+MIN_VERSION = "2.1.0"  # Minimum version allowed (older versions will be blocked)
 
 @app.get("/version")
 async def get_version():
