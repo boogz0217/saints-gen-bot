@@ -4,6 +4,7 @@ Runs alongside the Discord bot to provide HTTP endpoints for the macro.
 """
 from fastapi import FastAPI, HTTPException, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
 import asyncpg
@@ -14,6 +15,43 @@ import hashlib
 import base64
 import json
 import re
+
+# Ed25519 for new token signing
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+# Ed25519 private key for signing tokens (keep secret!)
+PRIVATE_KEY_B64 = os.getenv("PRIVATE_KEY_B64", "ivndKTkbKsa74AoKIAyx4cEbRtw3gH+k2hDtuOkF4/E=")
+
+
+def get_private_key() -> Ed25519PrivateKey:
+    """Load the Ed25519 private key."""
+    private_bytes = base64.b64decode(PRIVATE_KEY_B64)
+    return Ed25519PrivateKey.from_private_bytes(private_bytes)
+
+
+def generate_signed_token(discord_id: str, username: str, expires_timestamp: int, product: str = "") -> str:
+    """Generate an Ed25519 signed token for the user."""
+    payload = {
+        "did": discord_id,
+        "name": username,
+        "exp": expires_timestamp
+    }
+    if product:
+        payload["product"] = product
+
+    payload_json = json.dumps(payload, separators=(',', ':'))
+    payload_b64 = base64.urlsafe_b64encode(payload_json.encode()).decode().rstrip('=')
+
+    private_key = get_private_key()
+    signature = private_key.sign(payload_b64.encode())
+    signature_b64 = base64.urlsafe_b64encode(signature).decode().rstrip('=')
+
+    return f"{payload_b64}.{signature_b64}"
+
+
+class DiscordAuthRequest(BaseModel):
+    discord_id: str
+    hwid: Optional[str] = None
 
 # API has its own database pool (separate from bot to avoid thread conflicts)
 DATABASE_URL = os.getenv("DATABASE_URL", "")
@@ -176,6 +214,101 @@ async def verify_license(
                 }
             }
         }
+
+
+@app.post("/auth/discord")
+async def auth_discord(request: DiscordAuthRequest):
+    """
+    Authenticate user with Discord ID and return a signed token.
+    This allows users to login with their Discord ID instead of a license key.
+
+    Body:
+        discord_id: The user's Discord ID (numeric string)
+        hwid: The hardware ID of the machine (optional)
+
+    Returns:
+        {"success": true, "token": "...", "username": "...", "expires_at": "..."}
+    """
+    discord_id = request.discord_id.strip()
+    hwid = request.hwid.strip() if request.hwid else ""
+
+    if not discord_id:
+        raise HTTPException(status_code=400, detail="Missing Discord ID")
+
+    if not discord_id.isdigit():
+        raise HTTPException(status_code=400, detail="Invalid Discord ID format")
+
+    try:
+        pool = await get_api_pool()
+        async with pool.acquire() as conn:
+            # Get the most recent non-revoked license for this Discord ID
+            row = await conn.fetchrow(
+                """SELECT discord_id, discord_name, expires_at, hwid, product, revoked
+                   FROM licenses
+                   WHERE discord_id = $1 AND revoked = 0
+                   ORDER BY expires_at DESC
+                   LIMIT 1""",
+                discord_id
+            )
+
+            if not row:
+                return {
+                    "success": False,
+                    "error": "No active subscription found for this Discord ID"
+                }
+
+            if row["revoked"]:
+                return {
+                    "success": False,
+                    "error": "Your subscription has been revoked"
+                }
+
+            # Check expiration
+            expires_at = row["expires_at"]
+            if isinstance(expires_at, str):
+                expires_at = datetime.fromisoformat(expires_at)
+
+            if datetime.utcnow() > expires_at:
+                return {
+                    "success": False,
+                    "error": "Your subscription has expired"
+                }
+
+            expires_timestamp = int(expires_at.timestamp())
+
+            # Check HWID binding
+            stored_hwid = row["hwid"]
+            if stored_hwid and hwid and stored_hwid != hwid:
+                return {
+                    "success": False,
+                    "error": "This subscription is bound to another PC. Contact support to reset."
+                }
+
+            # Bind HWID if not already bound
+            if not stored_hwid and hwid:
+                await conn.execute(
+                    "UPDATE licenses SET hwid = $1 WHERE discord_id = $2 AND revoked = 0",
+                    hwid, discord_id
+                )
+
+            # Generate Ed25519 signed token
+            username = row["discord_name"] or "User"
+            product = row["product"] or ""
+            token = generate_signed_token(discord_id, username, expires_timestamp, product)
+
+            return {
+                "success": True,
+                "token": token,
+                "username": username,
+                "avatar_url": "",
+                "expires_at": expires_at.isoformat(),
+                "product": product
+            }
+
+    except Exception as e:
+        print(f"Database error in auth_discord: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
 
 # ==================== SHOPIFY WEBHOOK ====================
@@ -450,3 +583,19 @@ async def mark_notification_failed(notification_id: int, error: str = None):
 async def health():
     """Health check for Railway."""
     return {"status": "healthy"}
+
+
+# ==================== AUTO-UPDATE ====================
+
+# Update this when releasing new versions
+CURRENT_VERSION = "2.1.0"
+DOWNLOAD_URL = "https://github.com/boogz0217/saints-gen-releases/releases/download/v2.1.0/SaintsGen.exe"
+
+@app.get("/version")
+async def get_version():
+    """Return current version info for auto-updater."""
+    return {
+        "version": CURRENT_VERSION,
+        "download_url": DOWNLOAD_URL,
+        "changelog": "Discord ID login, improved stability"
+    }
