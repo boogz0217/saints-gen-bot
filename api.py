@@ -585,17 +585,17 @@ async def health():
     return {"status": "healthy"}
 
 
-# ==================== AUTO-UPDATE ====================
+# ==================== VERSION CHECK ====================
 
-# Update this when releasing new versions
-CURRENT_VERSION = "2.2.0"
-DOWNLOAD_URL = "https://github.com/boogz0217/saints-gen-releases/releases/download/v2.1.0/SaintsGen.exe"
+# Update these when releasing new versions
+CURRENT_VERSION = "2.1.0"  # Latest version available
+MIN_VERSION = "2.1.0"  # Minimum version allowed (older versions will be blocked)
 
 @app.get("/version")
 async def get_version():
-    """Return current version info for auto-updater."""
+    """Return version info for version checker."""
     return {
         "version": CURRENT_VERSION,
-        "download_url": DOWNLOAD_URL,
-        "changelog": "Discord ID login, improved stability"
+        "min_version": MIN_VERSION,
+        "update_message": "Please download the latest version from the Discord server."
     }
