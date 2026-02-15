@@ -588,7 +588,7 @@ async def health():
 # ==================== AUTO-UPDATE ====================
 
 # Update this when releasing new versions
-CURRENT_VERSION = "2.1.0"
+CURRENT_VERSION = "2.2.0"
 DOWNLOAD_URL = "https://github.com/boogz0217/saints-gen-releases/releases/download/v2.1.0/SaintsGen.exe"
 
 @app.get("/version")
