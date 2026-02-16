@@ -241,9 +241,14 @@ async def auth_discord(request: DiscordAuthRequest):
     if not discord_id.isdigit():
         raise HTTPException(status_code=400, detail="Invalid Discord ID format")
 
-    # Validate product if provided
+    # Require product parameter - blocks old clients that don't send it
     valid_products = ["saints-gen", "saints-shot"]
-    if requested_product and requested_product not in valid_products:
+    if not requested_product:
+        return {
+            "success": False,
+            "error": "Update required! Please download the latest version from Discord."
+        }
+    if requested_product not in valid_products:
         return {
             "success": False,
             "error": f"Invalid product. Must be one of: {', '.join(valid_products)}"
@@ -252,27 +257,15 @@ async def auth_discord(request: DiscordAuthRequest):
     try:
         pool = await get_api_pool()
         async with pool.acquire() as conn:
-            # Get license for this Discord ID, filtered by product if specified
-            if requested_product:
-                # Product-specific query - only get license for the requested product
-                row = await conn.fetchrow(
-                    """SELECT discord_id, discord_name, expires_at, hwid, product, revoked
-                       FROM licenses
-                       WHERE discord_id = $1 AND revoked = 0 AND product = $2
-                       ORDER BY expires_at DESC
-                       LIMIT 1""",
-                    discord_id, requested_product
-                )
-            else:
-                # Legacy fallback - get any license (for old clients)
-                row = await conn.fetchrow(
-                    """SELECT discord_id, discord_name, expires_at, hwid, product, revoked
-                       FROM licenses
-                       WHERE discord_id = $1 AND revoked = 0
-                       ORDER BY expires_at DESC
-                       LIMIT 1""",
-                    discord_id
-                )
+            # Get license for this Discord ID, filtered by product (required)
+            row = await conn.fetchrow(
+                """SELECT discord_id, discord_name, expires_at, hwid, product, revoked
+                   FROM licenses
+                   WHERE discord_id = $1 AND revoked = 0 AND product = $2
+                   ORDER BY expires_at DESC
+                   LIMIT 1""",
+                discord_id, requested_product
+            )
 
             if not row:
                 if requested_product:
