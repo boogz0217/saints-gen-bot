@@ -599,3 +599,49 @@ async def get_version():
         "min_version": MIN_VERSION,
         "update_message": "Please download the latest version from the Discord server."
     }
+
+
+# ==================== ADMIN ENDPOINTS ====================
+
+ADMIN_SECRET = os.getenv("ADMIN_SECRET", SECRET_KEY)  # Use SECRET_KEY as fallback
+
+
+@app.post("/admin/reset-all-hwids")
+async def reset_all_hwids(
+    secret: str = Header(None, alias="X-Admin-Secret"),
+    product: Optional[str] = None
+):
+    """
+    Reset all hardware ID bindings (forces everyone to re-authenticate).
+    Requires X-Admin-Secret header.
+
+    Query params:
+        product: Optional product filter (saints-gen or saints-shot)
+    """
+    if not secret or secret != ADMIN_SECRET:
+        raise HTTPException(status_code=401, detail="Invalid admin secret")
+
+    try:
+        pool = await get_api_pool()
+        async with pool.acquire() as conn:
+            if product:
+                result = await conn.execute(
+                    "UPDATE licenses SET hwid = NULL WHERE hwid IS NOT NULL AND product = $1",
+                    product
+                )
+            else:
+                result = await conn.execute(
+                    "UPDATE licenses SET hwid = NULL WHERE hwid IS NOT NULL"
+                )
+            # Parse "UPDATE N" to get count
+            count = int(result.split()[-1]) if result else 0
+
+        return {
+            "success": True,
+            "count": count,
+            "message": f"Reset {count} hardware bindings" + (f" for {product}" if product else "")
+        }
+    except Exception as e:
+        print(f"Error resetting HWIDs: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
