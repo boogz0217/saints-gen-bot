@@ -624,13 +624,37 @@ async def health():
 
 # ==================== VERSION CHECK ====================
 
-# Update these when releasing new versions
-CURRENT_VERSION = "2.1.0"  # Latest version available
-MIN_VERSION = "2.1.0"  # Minimum version allowed (older versions will be blocked)
+# Per-product version requirements
+PRODUCT_VERSIONS = {
+    "saints-gen": {
+        "current": "2.1.0",
+        "min": "2.1.0",
+        "message": "Please download the latest version from the Discord server."
+    },
+    "saints-shot": {
+        "current": "2.0.0",
+        "min": "2.0.0",
+        "message": "Please download the latest version from the Discord server."
+    }
+}
+
+# Default/legacy versions (for clients that don't specify product)
+CURRENT_VERSION = "2.1.0"
+MIN_VERSION = "2.1.0"
 
 @app.get("/version")
-async def get_version():
+async def get_version(product: Optional[str] = None):
     """Return version info for version checker."""
+    if product and product in PRODUCT_VERSIONS:
+        version_info = PRODUCT_VERSIONS[product]
+        return {
+            "version": version_info["current"],
+            "min_version": version_info["min"],
+            "update_message": version_info["message"],
+            "product": product
+        }
+
+    # Legacy response for clients that don't specify product
     return {
         "version": CURRENT_VERSION,
         "min_version": MIN_VERSION,
