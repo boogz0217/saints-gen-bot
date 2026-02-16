@@ -293,16 +293,16 @@ PRODUCT_CHOICES = [
 ]
 
 
-@bot.tree.command(name="generate", description="Generate a license key for a user")
+@bot.tree.command(name="generate", description="Give a user access to a product")
 @is_admin()
 @app_commands.describe(
-    user="The Discord user to generate a key for",
-    days="Number of days until the license expires",
-    product="Which product to generate a license for"
+    user="The Discord user to give access to",
+    days="Number of days of access",
+    product="Which product to give access for"
 )
 @app_commands.choices(product=PRODUCT_CHOICES)
 async def generate(interaction: discord.Interaction, user: discord.User, days: int, product: str = "saints-gen"):
-    """Generate a new license key for a user."""
+    """Give a user access to a product (they login with their Discord ID)."""
     if days < 1:
         await interaction.response.send_message("Days must be at least 1.", ephemeral=True)
         return
@@ -311,13 +311,8 @@ async def generate(interaction: discord.Interaction, user: discord.User, days: i
         await interaction.response.send_message("Maximum is 36500 days (100 years).", ephemeral=True)
         return
 
-    # Get user's avatar URL (if they have one)
-    avatar_url = ""
-    if user.avatar:
-        avatar_url = user.avatar.url
-
-    # Generate the key
-    license_key, expires_at = generate_license_key(SECRET_KEY, str(user.id), days, user.name, avatar_url)
+    # Generate internal key (user never sees this)
+    license_key, expires_at = generate_license_key(SECRET_KEY, str(user.id), days, user.name, "")
 
     # Store in database
     success = await add_license(
@@ -330,7 +325,7 @@ async def generate(interaction: discord.Interaction, user: discord.User, days: i
 
     if not success:
         await interaction.response.send_message(
-            "Failed to create license (key collision). Try again.",
+            "Failed to create subscription. Try again.",
             ephemeral=True
         )
         return
@@ -345,7 +340,7 @@ async def generate(interaction: discord.Interaction, user: discord.User, days: i
                 member = await guild.fetch_member(user.id)
                 role = guild.get_role(role_id)
                 if member and role and role not in member.roles:
-                    await member.add_roles(role, reason=f"License generated for {product}")
+                    await member.add_roles(role, reason=f"Subscription added for {product}")
                     role_added = True
         except Exception as e:
             print(f"Could not add role to {user}: {e}")
@@ -353,33 +348,33 @@ async def generate(interaction: discord.Interaction, user: discord.User, days: i
     # Product display name
     product_name = "Saint's Gen" if product == "saints-gen" else "Saint's Shot"
 
-    # Create embed response
+    # Create embed response (no license key shown)
     embed = discord.Embed(
-        title="License Generated",
+        title="Subscription Added",
         color=discord.Color.green()
     )
     embed.add_field(name="Product", value=product_name, inline=True)
-    embed.add_field(name="User", value=f"{user.mention} ({user.id})", inline=False)
+    embed.add_field(name="User", value=f"{user.mention}", inline=True)
+    embed.add_field(name="Discord ID", value=f"`{user.id}`", inline=False)
     embed.add_field(name="Duration", value=f"{days} days", inline=True)
     embed.add_field(name="Expires", value=expires_at.strftime("%Y-%m-%d %H:%M UTC"), inline=True)
     if role_added:
-        embed.add_field(name="Role", value="Subscriber role added", inline=True)
-    embed.add_field(name="License Key", value=f"```{license_key}```", inline=False)
+        embed.add_field(name="Role", value="Added", inline=True)
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    # Try to DM the user their key
+    # DM the user (no key, just tell them to use Discord ID)
     try:
         user_embed = discord.Embed(
-            title=f"Your {product_name} License",
-            description="Your license key has been generated!",
-            color=discord.Color.blue()
+            title=f"{product_name} Access Granted!",
+            description="You now have access to the product.",
+            color=discord.Color.green()
         )
-        user_embed.add_field(name="License Key", value=f"```{license_key}```", inline=False)
+        user_embed.add_field(name="Your Discord ID", value=f"```{user.id}```", inline=False)
         user_embed.add_field(name="Expires", value=expires_at.strftime("%Y-%m-%d %H:%M UTC"), inline=False)
         user_embed.add_field(
             name="How to Activate",
-            value=f"1. Open {product_name}\n2. Enter the license key when prompted\n3. Click Activate",
+            value=f"1. Open {product_name}\n2. Enter your Discord ID\n3. Click Activate",
             inline=False
         )
         await user.send(embed=user_embed)
