@@ -206,7 +206,7 @@ class LicenseBot(commands.Bot):
                         except Exception as e:
                             print(f"Error adding role to {discord_id}: {e}")
 
-                # Send DM with license key
+                # Send DM with activation instructions
                 if user:
                     try:
                         embed = discord.Embed(
@@ -215,8 +215,8 @@ class LicenseBot(commands.Bot):
                             color=discord.Color.green()
                         )
                         embed.add_field(
-                            name="License Key",
-                            value=f"```{license_key}```",
+                            name="Your Discord ID",
+                            value=f"```{discord_id}```",
                             inline=False
                         )
                         embed.add_field(
@@ -226,7 +226,7 @@ class LicenseBot(commands.Bot):
                         )
                         embed.add_field(
                             name="How to Activate",
-                            value=f"1. Open {product_name}\n2. Enter the license key when prompted\n3. Click Activate",
+                            value=f"1. Open {product_name}\n2. Enter your Discord ID when prompted\n3. Click Activate",
                             inline=False
                         )
                         if role_added:
@@ -753,56 +753,6 @@ async def get_id(interaction: discord.Interaction):
     embed.set_footer(text="Your license key will be sent to you via DM after purchase!")
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
-
-
-@bot.tree.command(name="mykey", description="Get your license key (sent via DM)")
-@app_commands.describe(product="Which product's license to retrieve (optional)")
-@app_commands.choices(product=PRODUCT_CHOICES)
-async def mykey(interaction: discord.Interaction, product: str = None):
-    """Send the user their license key via DM."""
-    license_data = await get_license_by_user(str(interaction.user.id), product)
-
-    if not license_data:
-        await interaction.response.send_message(
-            "You don't have an active license. Contact an admin to purchase one.",
-            ephemeral=True
-        )
-        return
-
-    # Check if expired
-    expires = license_data["expires_at"]
-    if isinstance(expires, str):
-        expires = datetime.fromisoformat(expires)
-    if expires < datetime.utcnow():
-        await interaction.response.send_message(
-            "Your license has expired. Contact an admin to renew.",
-            ephemeral=True
-        )
-        return
-
-    # Get product name
-    prod = license_data.get("product", "saints-gen")
-    prod_name = "Saint's Gen" if prod == "saints-gen" else "Saint's Shot"
-
-    # Try to DM the key
-    try:
-        embed = discord.Embed(
-            title=f"Your {prod_name} License",
-            color=discord.Color.blue()
-        )
-        embed.add_field(name="License Key", value=f"```{license_data['license_key']}```", inline=False)
-        embed.add_field(name="Expires", value=expires.strftime("%Y-%m-%d %H:%M UTC"), inline=False)
-
-        await interaction.user.send(embed=embed)
-        await interaction.response.send_message(
-            "Your license key has been sent to your DMs!",
-            ephemeral=True
-        )
-    except discord.Forbidden:
-        await interaction.response.send_message(
-            "I couldn't DM you. Please enable DMs from server members.",
-            ephemeral=True
-        )
 
 
 @bot.tree.command(name="status", description="Check your subscription status")
