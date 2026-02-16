@@ -52,6 +52,7 @@ def generate_signed_token(discord_id: str, username: str, expires_timestamp: int
 class DiscordAuthRequest(BaseModel):
     discord_id: str
     hwid: Optional[str] = None
+    product: Optional[str] = None  # "saints-gen" or "saints-shot"
 
 # API has its own database pool (separate from bot to avoid thread conflicts)
 DATABASE_URL = os.getenv("DATABASE_URL", "")
@@ -225,12 +226,14 @@ async def auth_discord(request: DiscordAuthRequest):
     Body:
         discord_id: The user's Discord ID (numeric string)
         hwid: The hardware ID of the machine (optional)
+        product: The product to authenticate for ("saints-gen" or "saints-shot")
 
     Returns:
-        {"success": true, "token": "...", "username": "...", "expires_at": "..."}
+        {"success": true, "token": "...", "username": "...", "expires_at": "...", "product": "..."}
     """
     discord_id = request.discord_id.strip()
     hwid = request.hwid.strip() if request.hwid else ""
+    requested_product = request.product.strip().lower() if request.product else ""
 
     if not discord_id:
         raise HTTPException(status_code=400, detail="Missing Discord ID")
@@ -238,20 +241,46 @@ async def auth_discord(request: DiscordAuthRequest):
     if not discord_id.isdigit():
         raise HTTPException(status_code=400, detail="Invalid Discord ID format")
 
+    # Validate product if provided
+    valid_products = ["saints-gen", "saints-shot"]
+    if requested_product and requested_product not in valid_products:
+        return {
+            "success": False,
+            "error": f"Invalid product. Must be one of: {', '.join(valid_products)}"
+        }
+
     try:
         pool = await get_api_pool()
         async with pool.acquire() as conn:
-            # Get the most recent non-revoked license for this Discord ID
-            row = await conn.fetchrow(
-                """SELECT discord_id, discord_name, expires_at, hwid, product, revoked
-                   FROM licenses
-                   WHERE discord_id = $1 AND revoked = 0
-                   ORDER BY expires_at DESC
-                   LIMIT 1""",
-                discord_id
-            )
+            # Get license for this Discord ID, filtered by product if specified
+            if requested_product:
+                # Product-specific query - only get license for the requested product
+                row = await conn.fetchrow(
+                    """SELECT discord_id, discord_name, expires_at, hwid, product, revoked
+                       FROM licenses
+                       WHERE discord_id = $1 AND revoked = 0 AND product = $2
+                       ORDER BY expires_at DESC
+                       LIMIT 1""",
+                    discord_id, requested_product
+                )
+            else:
+                # Legacy fallback - get any license (for old clients)
+                row = await conn.fetchrow(
+                    """SELECT discord_id, discord_name, expires_at, hwid, product, revoked
+                       FROM licenses
+                       WHERE discord_id = $1 AND revoked = 0
+                       ORDER BY expires_at DESC
+                       LIMIT 1""",
+                    discord_id
+                )
 
             if not row:
+                if requested_product:
+                    product_name = "Saint's Gen" if requested_product == "saints-gen" else "Saint's Shot"
+                    return {
+                        "success": False,
+                        "error": f"No active {product_name} subscription found for this Discord ID"
+                    }
                 return {
                     "success": False,
                     "error": "No active subscription found for this Discord ID"
@@ -284,12 +313,20 @@ async def auth_discord(request: DiscordAuthRequest):
                     "error": "This subscription is bound to another PC. Contact support to reset."
                 }
 
-            # Bind HWID if not already bound
+            # Bind HWID if not already bound (product-specific binding)
             if not stored_hwid and hwid:
-                await conn.execute(
-                    "UPDATE licenses SET hwid = $1 WHERE discord_id = $2 AND revoked = 0",
-                    hwid, discord_id
-                )
+                license_product = row["product"] or ""
+                if license_product:
+                    # Update only the specific product's license
+                    await conn.execute(
+                        "UPDATE licenses SET hwid = $1 WHERE discord_id = $2 AND product = $3 AND revoked = 0",
+                        hwid, discord_id, license_product
+                    )
+                else:
+                    await conn.execute(
+                        "UPDATE licenses SET hwid = $1 WHERE discord_id = $2 AND revoked = 0",
+                        hwid, discord_id
+                    )
 
             # Generate Ed25519 signed token
             username = row["discord_name"] or "User"
