@@ -319,6 +319,23 @@ async def reset_hwid_by_user(discord_id: str) -> int:
         return int(result.split()[-1]) if result else 0
 
 
+async def reset_all_hwids(product: str = None) -> int:
+    """Reset hardware ID binding for all licenses, optionally filtered by product. Returns count reset."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        if product:
+            result = await conn.execute(
+                "UPDATE licenses SET hwid = NULL WHERE hwid IS NOT NULL AND product = $1",
+                product
+            )
+        else:
+            result = await conn.execute(
+                "UPDATE licenses SET hwid = NULL WHERE hwid IS NOT NULL"
+            )
+        # Parse "UPDATE N" to get count
+        return int(result.split()[-1]) if result else 0
+
+
 async def get_hwid_by_key(license_key: str) -> Optional[str]:
     """Get the hardware ID bound to a license."""
     pool = await get_pool()

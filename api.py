@@ -4,6 +4,7 @@ Runs alongside the Discord bot to provide HTTP endpoints for the macro.
 """
 from fastapi import FastAPI, HTTPException, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
 import asyncpg
@@ -14,6 +15,44 @@ import hashlib
 import base64
 import json
 import re
+
+# Ed25519 for new token signing
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+# Ed25519 private key for signing tokens (keep secret!)
+PRIVATE_KEY_B64 = os.getenv("PRIVATE_KEY_B64", "ivndKTkbKsa74AoKIAyx4cEbRtw3gH+k2hDtuOkF4/E=")
+
+
+def get_private_key() -> Ed25519PrivateKey:
+    """Load the Ed25519 private key."""
+    private_bytes = base64.b64decode(PRIVATE_KEY_B64)
+    return Ed25519PrivateKey.from_private_bytes(private_bytes)
+
+
+def generate_signed_token(discord_id: str, username: str, expires_timestamp: int, product: str = "") -> str:
+    """Generate an Ed25519 signed token for the user."""
+    payload = {
+        "did": discord_id,
+        "name": username,
+        "exp": expires_timestamp
+    }
+    if product:
+        payload["product"] = product
+
+    payload_json = json.dumps(payload, separators=(',', ':'))
+    payload_b64 = base64.urlsafe_b64encode(payload_json.encode()).decode().rstrip('=')
+
+    private_key = get_private_key()
+    signature = private_key.sign(payload_b64.encode())
+    signature_b64 = base64.urlsafe_b64encode(signature).decode().rstrip('=')
+
+    return f"{payload_b64}.{signature_b64}"
+
+
+class DiscordAuthRequest(BaseModel):
+    discord_id: str
+    hwid: Optional[str] = None
+    product: Optional[str] = None  # "saints-gen" or "saints-shot"
 
 # API has its own database pool (separate from bot to avoid thread conflicts)
 DATABASE_URL = os.getenv("DATABASE_URL", "")
@@ -176,6 +215,130 @@ async def verify_license(
                 }
             }
         }
+
+
+@app.post("/auth/discord")
+async def auth_discord(request: DiscordAuthRequest):
+    """
+    Authenticate user with Discord ID and return a signed token.
+    This allows users to login with their Discord ID instead of a license key.
+
+    Body:
+        discord_id: The user's Discord ID (numeric string)
+        hwid: The hardware ID of the machine (optional)
+        product: The product to authenticate for ("saints-gen" or "saints-shot")
+
+    Returns:
+        {"success": true, "token": "...", "username": "...", "expires_at": "...", "product": "..."}
+    """
+    discord_id = request.discord_id.strip()
+    hwid = request.hwid.strip() if request.hwid else ""
+    requested_product = request.product.strip().lower() if request.product else ""
+
+    if not discord_id:
+        raise HTTPException(status_code=400, detail="Missing Discord ID")
+
+    if not discord_id.isdigit():
+        raise HTTPException(status_code=400, detail="Invalid Discord ID format")
+
+    # Require product parameter - blocks old clients that don't send it
+    valid_products = ["saints-gen", "saints-shot"]
+    if not requested_product:
+        return {
+            "success": False,
+            "error": "Update required! Please download the latest version from Discord."
+        }
+    if requested_product not in valid_products:
+        return {
+            "success": False,
+            "error": f"Invalid product. Must be one of: {', '.join(valid_products)}"
+        }
+
+    try:
+        pool = await get_api_pool()
+        async with pool.acquire() as conn:
+            # Get license for this Discord ID, filtered by product (required)
+            row = await conn.fetchrow(
+                """SELECT discord_id, discord_name, expires_at, hwid, product, revoked
+                   FROM licenses
+                   WHERE discord_id = $1 AND revoked = 0 AND product = $2
+                   ORDER BY expires_at DESC
+                   LIMIT 1""",
+                discord_id, requested_product
+            )
+
+            if not row:
+                if requested_product:
+                    product_name = "Saint's Gen" if requested_product == "saints-gen" else "Saint's Shot"
+                    return {
+                        "success": False,
+                        "error": f"No active {product_name} subscription found for this Discord ID"
+                    }
+                return {
+                    "success": False,
+                    "error": "No active subscription found for this Discord ID"
+                }
+
+            if row["revoked"]:
+                return {
+                    "success": False,
+                    "error": "Your subscription has been revoked"
+                }
+
+            # Check expiration
+            expires_at = row["expires_at"]
+            if isinstance(expires_at, str):
+                expires_at = datetime.fromisoformat(expires_at)
+
+            if datetime.utcnow() > expires_at:
+                return {
+                    "success": False,
+                    "error": "Your subscription has expired"
+                }
+
+            expires_timestamp = int(expires_at.timestamp())
+
+            # Check HWID binding
+            stored_hwid = row["hwid"]
+            if stored_hwid and hwid and stored_hwid != hwid:
+                return {
+                    "success": False,
+                    "error": "This subscription is bound to another PC. Contact support to reset."
+                }
+
+            # Bind HWID if not already bound (product-specific binding)
+            if not stored_hwid and hwid:
+                license_product = row["product"] or ""
+                if license_product:
+                    # Update only the specific product's license
+                    await conn.execute(
+                        "UPDATE licenses SET hwid = $1 WHERE discord_id = $2 AND product = $3 AND revoked = 0",
+                        hwid, discord_id, license_product
+                    )
+                else:
+                    await conn.execute(
+                        "UPDATE licenses SET hwid = $1 WHERE discord_id = $2 AND revoked = 0",
+                        hwid, discord_id
+                    )
+
+            # Generate Ed25519 signed token
+            username = row["discord_name"] or "User"
+            product = row["product"] or ""
+            token = generate_signed_token(discord_id, username, expires_timestamp, product)
+
+            return {
+                "success": True,
+                "token": token,
+                "username": username,
+                "avatar_url": "",
+                "expires_at": expires_at.isoformat(),
+                "product": product
+            }
+
+    except Exception as e:
+        print(f"Database error in auth_discord: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
 
 # ==================== SHOPIFY WEBHOOK ====================
@@ -452,17 +615,87 @@ async def health():
     return {"status": "healthy"}
 
 
-# ==================== VERSION CONTROL ====================
-# Update min_version to kick users off old versions
+# ==================== VERSION CHECK ====================
+
+# Per-product version requirements
+PRODUCT_VERSIONS = {
+    "saints-gen": {
+        "current": "2.2.0",
+        "min": "2.2.0",
+        "message": "Please download the latest version from the Discord server."
+    },
+    "saints-shot": {
+        "current": "2.0.0",
+        "min": "2.0.0",
+        "message": "Please download the latest version from the Discord server."
+    }
+}
+
+# Default/legacy versions (for clients that don't specify product)
+CURRENT_VERSION = "2.2.0"
+MIN_VERSION = "2.2.0"
 
 @app.get("/version")
-async def version():
-    """
-    Version check endpoint for Saint's Gen client.
-    Update min_version to force users to update.
-    """
+async def get_version(product: Optional[str] = None):
+    """Return version info for version checker."""
+    if product and product in PRODUCT_VERSIONS:
+        version_info = PRODUCT_VERSIONS[product]
+        return {
+            "version": version_info["current"],
+            "min_version": version_info["min"],
+            "update_message": version_info["message"],
+            "product": product
+        }
+
+    # Legacy response for clients that don't specify product
     return {
-        "version": "2.2.0",           # Latest available version
-        "min_version": "2.2.0",       # Minimum required version (users below this are blocked)
-        "update_message": "Please download the latest version from Discord."
+        "version": CURRENT_VERSION,
+        "min_version": MIN_VERSION,
+        "update_message": "Please download the latest version from the Discord server."
     }
+
+
+# ==================== ADMIN ENDPOINTS ====================
+
+ADMIN_SECRET = os.getenv("ADMIN_SECRET", SECRET_KEY)  # Use SECRET_KEY as fallback
+
+
+@app.post("/admin/reset-all-hwids")
+async def reset_all_hwids(
+    secret: str = Header(None, alias="X-Admin-Secret"),
+    product: Optional[str] = None
+):
+    """
+    Reset all hardware ID bindings (forces everyone to re-authenticate).
+    Requires X-Admin-Secret header.
+
+    Query params:
+        product: Optional product filter (saints-gen or saints-shot)
+    """
+    if not secret or secret != ADMIN_SECRET:
+        raise HTTPException(status_code=401, detail="Invalid admin secret")
+
+    try:
+        pool = await get_api_pool()
+        async with pool.acquire() as conn:
+            if product:
+                result = await conn.execute(
+                    "UPDATE licenses SET hwid = NULL WHERE hwid IS NOT NULL AND product = $1",
+                    product
+                )
+            else:
+                result = await conn.execute(
+                    "UPDATE licenses SET hwid = NULL WHERE hwid IS NOT NULL"
+                )
+            # Parse "UPDATE N" to get count
+            count = int(result.split()[-1]) if result else 0
+
+        return {
+            "success": True,
+            "count": count,
+            "message": f"Reset {count} hardware bindings" + (f" for {product}" if product else "")
+        }
+    except Exception as e:
+        print(f"Error resetting HWIDs: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
