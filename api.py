@@ -620,8 +620,8 @@ async def health():
 # Per-product version requirements
 PRODUCT_VERSIONS = {
     "saints-gen": {
-        "current": "2.2.0",
-        "min": "2.2.0",
+        "current": "2.3.0",
+        "min": "2.3.0",
         "message": "Please download the latest version from the Discord server."
     },
     "saints-shot": {
@@ -632,8 +632,8 @@ PRODUCT_VERSIONS = {
 }
 
 # Default/legacy versions (for clients that don't specify product)
-CURRENT_VERSION = "2.2.0"
-MIN_VERSION = "2.2.0"
+CURRENT_VERSION = "2.3.0"
+MIN_VERSION = "2.3.0"
 
 @app.get("/version")
 async def get_version(product: Optional[str] = None):
