@@ -450,3 +450,19 @@ async def mark_notification_failed(notification_id: int, error: str = None):
 async def health():
     """Health check for Railway."""
     return {"status": "healthy"}
+
+
+# ==================== VERSION CONTROL ====================
+# Update min_version to kick users off old versions
+
+@app.get("/version")
+async def version():
+    """
+    Version check endpoint for Saint's Gen client.
+    Update min_version to force users to update.
+    """
+    return {
+        "version": "2.2.0",           # Latest available version
+        "min_version": "2.2.0",       # Minimum required version (users below this are blocked)
+        "update_message": "Please download the latest version from Discord."
+    }
