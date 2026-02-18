@@ -72,8 +72,8 @@ PRODUCT_VERSIONS = {
         "message": "Please download the latest version from the Discord server."
     },
     "saints-shot": {
-        "current": "2.0.0",
-        "min": "2.0.0",
+        "current": "2.1.0",
+        "min": "2.1.0",
         "message": "Please download the latest version from the Discord server."
     }
 }
