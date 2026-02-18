@@ -53,6 +53,51 @@ class DiscordAuthRequest(BaseModel):
     discord_id: str
     hwid: Optional[str] = None
     product: Optional[str] = None  # "saints-gen" or "saints-shot"
+    version: Optional[str] = None  # Client version for enforcement
+
+
+def parse_version(version: str) -> tuple:
+    """Parse version string to tuple for comparison."""
+    try:
+        return tuple(int(x) for x in version.split('.'))
+    except:
+        return (0, 0, 0)
+
+
+# Per-product version requirements (used for license version enforcement)
+PRODUCT_VERSIONS = {
+    "saints-gen": {
+        "current": "2.5.2",
+        "min": "2.5.2",
+        "message": "Please download the latest version from the Discord server."
+    },
+    "saints-shot": {
+        "current": "2.0.0",
+        "min": "2.0.0",
+        "message": "Please download the latest version from the Discord server."
+    }
+}
+
+# Default/legacy versions (for clients that don't specify product)
+CURRENT_VERSION = "2.5.2"
+MIN_VERSION = "2.5.2"
+
+
+def check_version_allowed(product: str, version: str) -> tuple:
+    """
+    Check if a client version is allowed for a product.
+    Returns (allowed: bool, message: str)
+    """
+    if not version:
+        # No version sent = old client, block it
+        return (False, "Update required! Please download the latest version from Discord.")
+
+    min_version = PRODUCT_VERSIONS.get(product, {}).get("min", "0.0.0")
+
+    if parse_version(version) < parse_version(min_version):
+        return (False, f"Update required! Your version {version} is outdated. Minimum required: {min_version}")
+
+    return (True, "")
 
 # API has its own database pool (separate from bot to avoid thread conflicts)
 DATABASE_URL = os.getenv("DATABASE_URL", "")
@@ -127,6 +172,12 @@ async def verify_license(
     """
     if not key or not key.startswith("SAINT-"):
         return {"valid": False, "reason": "invalid_format"}
+
+    # Check version - block old clients that don't send version or are outdated
+    if product:
+        allowed, msg = check_version_allowed(product, version)
+        if not allowed:
+            return {"valid": False, "reason": "update_required", "message": msg}
 
     try:
         pool = await get_api_pool()
@@ -252,6 +303,15 @@ async def auth_discord(request: DiscordAuthRequest):
         return {
             "success": False,
             "error": f"Invalid product. Must be one of: {', '.join(valid_products)}"
+        }
+
+    # Check version - block old clients that don't send version or are outdated
+    client_version = request.version.strip() if request.version else ""
+    allowed, msg = check_version_allowed(requested_product, client_version)
+    if not allowed:
+        return {
+            "success": False,
+            "error": msg
         }
 
     try:
@@ -616,24 +676,6 @@ async def health():
 
 
 # ==================== VERSION CHECK ====================
-
-# Per-product version requirements
-PRODUCT_VERSIONS = {
-    "saints-gen": {
-        "current": "2.5.1",
-        "min": "2.5.1",
-        "message": "Please download the latest version from the Discord server."
-    },
-    "saints-shot": {
-        "current": "2.0.0",
-        "min": "2.0.0",
-        "message": "Please download the latest version from the Discord server."
-    }
-}
-
-# Default/legacy versions (for clients that don't specify product)
-CURRENT_VERSION = "2.5.1"
-MIN_VERSION = "2.5.1"
 
 @app.get("/version")
 async def get_version(product: Optional[str] = None):
