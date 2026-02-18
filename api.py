@@ -67,8 +67,8 @@ def parse_version(version: str) -> tuple:
 # Per-product version requirements (used for license version enforcement)
 PRODUCT_VERSIONS = {
     "saints-gen": {
-        "current": "2.5.4",
-        "min": "2.5.4",
+        "current": "2.5.5",
+        "min": "2.5.5",
         "message": "Please download the latest version from the Discord server."
     },
     "saints-shot": {
