@@ -434,34 +434,48 @@ def extract_discord_id(order: dict) -> Optional[str]:
     Extract Discord ID/username from order.
     Checks multiple locations where it might be stored.
     """
-    # Check order note
-    note = order.get("note", "") or ""
-
-    # Look for Discord ID patterns (numeric ID or username#discriminator or just username)
-    # Pattern: Discord: 123456789 or Discord ID: 123456789
-    discord_patterns = [
-        r"discord\s*(?:id)?[:\s]+(\d{17,19})",  # Discord ID: 123456789012345678
-        r"discord\s*[:\s]+([a-zA-Z0-9_.]+(?:#\d{4})?)",  # Discord: username#1234 or username
-    ]
-
-    for pattern in discord_patterns:
-        match = re.search(pattern, note, re.IGNORECASE)
-        if match:
-            return match.group(1)
-
-    # Check note_attributes (custom checkout fields)
+    # Check note_attributes FIRST (custom checkout fields - most reliable)
     note_attributes = order.get("note_attributes", [])
+    print(f"[SHOPIFY] Checking note_attributes: {note_attributes}")
     for attr in note_attributes:
         name = attr.get("name", "").lower()
-        if "discord" in name:
-            return attr.get("value", "").strip()
+        value = attr.get("value", "").strip()
+        print(f"[SHOPIFY] Attribute: {name} = {value}")
+        if "discord" in name and value:
+            # If it's a numeric ID, return it directly
+            if value.isdigit() and len(value) >= 17:
+                print(f"[SHOPIFY] Found Discord ID in note_attributes: {value}")
+                return value
+            # Otherwise return whatever they entered (username)
+            print(f"[SHOPIFY] Found Discord value in note_attributes: {value}")
+            return value
 
     # Check custom attributes on line items
     for item in order.get("line_items", []):
         for prop in item.get("properties", []):
             name = prop.get("name", "").lower()
-            if "discord" in name:
-                return prop.get("value", "").strip()
+            value = prop.get("value", "").strip()
+            if "discord" in name and value:
+                print(f"[SHOPIFY] Found Discord in line item property: {value}")
+                return value
+
+    # Check order note
+    note = order.get("note", "") or ""
+    print(f"[SHOPIFY] Checking order note: {note}")
+
+    if note:
+        # Look for Discord ID patterns (numeric ID or username#discriminator or just username)
+        discord_patterns = [
+            r"discord\s*(?:id)?[:\s]+(\d{17,19})",  # Discord ID: 123456789012345678
+            r"discord\s*[:\s]+([a-zA-Z0-9_.]+(?:#\d{4})?)",  # Discord: username#1234 or username
+            r"(\d{17,19})",  # Just a plain Discord ID number
+        ]
+
+        for pattern in discord_patterns:
+            match = re.search(pattern, note, re.IGNORECASE)
+            if match:
+                print(f"[SHOPIFY] Found Discord in note via pattern: {match.group(1)}")
+                return match.group(1)
 
     return None
 

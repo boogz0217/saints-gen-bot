@@ -168,6 +168,7 @@ class LicenseBot(commands.Bot):
                 order_number = notif.get("order_number", "Unknown")
 
                 product_name = "Saint's Gen" if product == "saints-gen" else "Saint's Shot"
+                print(f"[NOTIF] Processing order #{order_number}: discord_id={discord_id}, product={product}")
 
                 # Try to find the user and assign role
                 user = None
@@ -176,35 +177,52 @@ class LicenseBot(commands.Bot):
                 error_message = None
 
                 # Check if discord_id is numeric (user ID) or username
-                if discord_id.isdigit():
+                if discord_id and discord_id.isdigit():
                     try:
                         user = await self.fetch_user(int(discord_id))
+                        print(f"[NOTIF] Found Discord user: {user} (ID: {user.id})")
                     except discord.NotFound:
                         error_message = f"User not found: {discord_id}"
-                        print(f"Could not find user with ID {discord_id}")
+                        print(f"[NOTIF] Could not find user with ID {discord_id}")
                     except Exception as e:
                         error_message = str(e)
-                        print(f"Error fetching user {discord_id}: {e}")
+                        print(f"[NOTIF] Error fetching user {discord_id}: {e}")
                 else:
                     error_message = f"Invalid Discord ID format: {discord_id}"
+                    print(f"[NOTIF] Invalid Discord ID format: {discord_id}")
 
                 # Assign role if we have guild configured
                 if user and GUILD_ID:
                     role_id = SAINTS_SHOT_ROLE_ID if product == "saints-shot" else SUBSCRIBER_ROLE_ID
+                    print(f"[NOTIF] Attempting role assignment: GUILD_ID={GUILD_ID}, role_id={role_id}")
                     if role_id:
                         try:
                             guild = self.get_guild(GUILD_ID)
                             if guild:
+                                print(f"[NOTIF] Found guild: {guild.name}")
                                 member = await guild.fetch_member(user.id)
                                 role = guild.get_role(role_id)
+                                print(f"[NOTIF] Member: {member}, Role: {role}")
                                 if member and role and role not in member.roles:
                                     await member.add_roles(role, reason=f"Shopify order #{order_number}")
                                     role_added = True
-                                    print(f"Added {product_name} role to {user}")
+                                    print(f"[NOTIF] SUCCESS: Added {product_name} role to {user}")
+                                elif member and role and role in member.roles:
+                                    print(f"[NOTIF] User already has the role")
+                                    role_added = True  # Already has it
+                            else:
+                                print(f"[NOTIF] Could not find guild with ID {GUILD_ID}")
                         except discord.NotFound:
-                            print(f"User {discord_id} not in guild")
+                            print(f"[NOTIF] User {discord_id} not in guild (NotFound)")
                         except Exception as e:
-                            print(f"Error adding role to {discord_id}: {e}")
+                            print(f"[NOTIF] Error adding role to {discord_id}: {e}")
+                    else:
+                        print(f"[NOTIF] No role_id configured for {product}")
+                else:
+                    if not user:
+                        print(f"[NOTIF] No user found, skipping role assignment")
+                    if not GUILD_ID:
+                        print(f"[NOTIF] GUILD_ID not configured")
 
                 # Send DM with activation instructions
                 if user:
