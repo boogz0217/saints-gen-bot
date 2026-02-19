@@ -445,7 +445,8 @@ def extract_discord_id(order: dict) -> Optional[str]:
         name = attr.get("name", "").lower()
         value = attr.get("value", "").strip()
         print(f"[SHOPIFY] Attribute: {name} = {value}")
-        if "discord" in name and value:
+        # Check for "did" (our Discord ID parameter) or "discord" in name
+        if (name == "did" or name == "discord_id" or "discord" in name) and value:
             # If it's a numeric ID, return it directly
             if value.isdigit() and len(value) >= 17:
                 print(f"[SHOPIFY] Found Discord ID in note_attributes: {value}")
@@ -762,6 +763,146 @@ async def get_discord_link():
         "link": oauth_url,
         "instructions": "Add this link to your Shopify checkout or product page. Customers click it to link their Discord before purchasing."
     }
+
+
+@app.get("/shopify-script", response_class=HTMLResponse)
+async def get_shopify_script():
+    """
+    Returns the script to add to your Shopify theme.
+    This captures the Discord ID from URL and adds it to cart.
+    """
+    script = """
+<!-- Discord ID Capture Script - Add this to your theme.liquid before </head> -->
+<script>
+(function() {
+    // Get Discord ID from URL parameter
+    const urlParams = new URLSearchParams(window.location.search);
+    const discordId = urlParams.get('did');
+    const discordName = urlParams.get('dname');
+
+    // If Discord ID found, save to localStorage
+    if (discordId) {
+        localStorage.setItem('discord_id', discordId);
+        localStorage.setItem('discord_name', discordName || 'User');
+        console.log('Discord ID saved:', discordId);
+    }
+
+    // Add Discord ID to cart before checkout
+    const savedDiscordId = localStorage.getItem('discord_id');
+    if (savedDiscordId) {
+        // Override fetch to intercept cart requests
+        const originalFetch = window.fetch;
+        window.fetch = function(url, options) {
+            if (url.includes('/cart/add') || url.includes('/cart/update')) {
+                // Add Discord ID to cart attributes
+                if (options && options.body) {
+                    try {
+                        let body = JSON.parse(options.body);
+                        body.attributes = body.attributes || {};
+                        body.attributes['did'] = savedDiscordId;
+                        body.attributes['discord_name'] = localStorage.getItem('discord_name') || 'User';
+                        options.body = JSON.stringify(body);
+                    } catch(e) {}
+                }
+            }
+            return originalFetch.apply(this, arguments);
+        };
+
+        // Also add to any existing cart via AJAX
+        fetch('/cart/update.js', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                attributes: {
+                    'did': savedDiscordId,
+                    'discord_name': localStorage.getItem('discord_name') || 'User'
+                }
+            })
+        }).catch(function(){});
+    }
+})();
+</script>
+"""
+
+    return HTMLResponse(f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Shopify Script</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; padding: 40px; background: #1a1a2e; color: #fff; }}
+            h1 {{ color: #4ecca3; }}
+            .code-box {{
+                background: #0f0f1a;
+                padding: 20px;
+                border-radius: 8px;
+                overflow-x: auto;
+                border: 1px solid #333;
+            }}
+            pre {{ margin: 0; white-space: pre-wrap; color: #ccc; }}
+            .copy-btn {{
+                background: #5865F2;
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 5px;
+                cursor: pointer;
+                margin-top: 15px;
+            }}
+            .copy-btn:hover {{ background: #4752c4; }}
+            .instructions {{
+                background: rgba(78, 204, 163, 0.1);
+                border: 1px solid #4ecca3;
+                padding: 20px;
+                border-radius: 8px;
+                margin: 20px 0;
+            }}
+            .instructions h3 {{ color: #4ecca3; margin-top: 0; }}
+            .instructions ol {{ padding-left: 20px; }}
+            .instructions li {{ margin: 10px 0; }}
+        </style>
+    </head>
+    <body>
+        <h1>Shopify Integration Script</h1>
+
+        <div class="instructions">
+            <h3>Setup Instructions:</h3>
+            <ol>
+                <li>Go to your Shopify Admin → Online Store → Themes</li>
+                <li>Click "Edit code" on your current theme</li>
+                <li>Open <code>theme.liquid</code></li>
+                <li>Paste this script just before <code>&lt;/head&gt;</code></li>
+                <li>Save the file</li>
+            </ol>
+        </div>
+
+        <div class="code-box">
+            <pre id="script-code">{script.replace('<', '&lt;').replace('>', '&gt;')}</pre>
+        </div>
+        <button class="copy-btn" onclick="copyScript()">Copy Script</button>
+
+        <div class="instructions" style="margin-top: 30px;">
+            <h3>How It Works:</h3>
+            <ol>
+                <li>Customer clicks your Discord link → Authorizes with Discord</li>
+                <li>Redirected to your store with <code>?did=DISCORD_ID</code></li>
+                <li>Script saves Discord ID to localStorage</li>
+                <li>When they checkout, Discord ID is attached to the order</li>
+                <li>Webhook receives order → License created → Role assigned</li>
+            </ol>
+        </div>
+
+        <script>
+            function copyScript() {{
+                const script = `{script}`;
+                navigator.clipboard.writeText(script).then(function() {{
+                    alert('Script copied to clipboard!');
+                }});
+            }}
+        </script>
+    </body>
+    </html>
+    """)
 
 
 # ==================== DISCORD OAUTH (Link Shopify Purchase) ====================
@@ -1092,19 +1233,14 @@ async def discord_oauth_callback(code: str = None, state: str = None, error: str
             </body></html>
         """, status_code=400)
 
-    # PRE-PURCHASE / DIRECT FLOW: Just save the link and redirect to store
+    # PRE-PURCHASE / DIRECT FLOW: Redirect to store with Discord ID in URL
     if flow_type in ("pre_purchase", "direct"):
-        # Save the email -> discord_id mapping
-        if discord_email:
-            try:
-                from database import save_linked_account
-                await save_linked_account(discord_email.lower(), discord_id, discord_name)
-                print(f"Linked account: {discord_email} -> {discord_id} ({discord_name})")
-            except Exception as e:
-                print(f"Error saving linked account (will use in-memory): {e}")
-                _linked_accounts[discord_email.lower()] = {"discord_id": discord_id, "discord_name": discord_name}
+        # Redirect to store with Discord ID as parameter
+        # Shopify theme script will capture this and add to cart
+        redirect_url = f"{STORE_URL}?did={discord_id}&dname={urllib.parse.quote(discord_name or 'User')}"
+        print(f"Discord linked: {discord_id} ({discord_name}) - redirecting to {redirect_url}")
 
-        # Success page with redirect to store
+        # Show success page with auto-redirect
         return HTMLResponse(f"""
         <!DOCTYPE html>
         <html>
@@ -1161,19 +1297,30 @@ async def discord_oauth_callback(code: str = None, state: str = None, error: str
                     background: #4752c4;
                     transform: translateY(-2px);
                 }}
+                .redirect-msg {{
+                    color: #888;
+                    font-size: 0.9rem;
+                    margin-top: 20px;
+                }}
             </style>
+            <script>
+                // Auto-redirect after 2 seconds
+                setTimeout(function() {{
+                    window.location.href = "{redirect_url}";
+                }}, 2000);
+            </script>
         </head>
         <body>
             <div class="container">
                 <div class="checkmark">✓</div>
                 <h1>Discord Linked!</h1>
-                <p>Your Discord account has been linked.</p>
+                <p>Welcome, <strong>{discord_name}</strong>!</p>
                 <div class="info">
-                    <p><strong>Discord:</strong> {discord_name}</p>
-                    <p><strong>Email:</strong> {discord_email or 'Not provided'}</p>
+                    <p>Your Discord account has been linked.</p>
+                    <p>You'll be redirected to the store automatically.</p>
                 </div>
-                <p>You can now proceed to purchase!</p>
-                <a href="{STORE_URL}" class="shop-btn">Continue to Store →</a>
+                <a href="{redirect_url}" class="shop-btn">Continue to Store →</a>
+                <p class="redirect-msg">Redirecting in 2 seconds...</p>
             </div>
         </body>
         </html>
