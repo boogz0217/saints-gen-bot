@@ -740,6 +740,30 @@ async def health():
     return {"status": "healthy"}
 
 
+@app.get("/discord-link")
+async def get_discord_link():
+    """
+    Get the direct Discord OAuth link to embed in Shopify.
+    This link goes directly to Discord's authorize page.
+    """
+    if not DISCORD_CLIENT_ID or not DISCORD_REDIRECT_URI:
+        return {"error": "Discord OAuth not configured"}
+
+    # Build the direct Discord OAuth URL
+    params = {
+        "client_id": DISCORD_CLIENT_ID,
+        "redirect_uri": DISCORD_REDIRECT_URI,
+        "response_type": "code",
+        "scope": "identify email guilds.join"  # guilds.join for auto-joining server
+    }
+    oauth_url = f"https://discord.com/oauth2/authorize?{urllib.parse.urlencode(params)}"
+
+    return {
+        "link": oauth_url,
+        "instructions": "Add this link to your Shopify checkout or product page. Customers click it to link their Discord before purchasing."
+    }
+
+
 # ==================== DISCORD OAUTH (Link Shopify Purchase) ====================
 
 DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "")
@@ -994,35 +1018,32 @@ async def start_discord_link(order: str = None, email: str = None):
 async def discord_oauth_callback(code: str = None, state: str = None, error: str = None):
     """
     Discord OAuth callback - receives the auth code and links the account.
+    Supports both stateful (from our landing page) and stateless (direct Discord link) flows.
     """
     if error:
         return HTMLResponse(f"""
-            <html><body style="font-family: Arial; padding: 40px; text-align: center;">
+            <html><body style="font-family: Arial; padding: 40px; text-align: center; background: #0a0a0f; color: #fff;">
                 <h1>Authorization Cancelled</h1>
                 <p>You cancelled the Discord authorization.</p>
-                <p><a href="javascript:window.close()">Close this window</a></p>
+                <p><a href="{STORE_URL}">Go to Store</a></p>
             </body></html>
         """)
 
-    if not code or not state:
+    if not code:
         return HTMLResponse("""
-            <html><body style="font-family: Arial; padding: 40px; text-align: center;">
+            <html><body style="font-family: Arial; padding: 40px; text-align: center; background: #0a0a0f; color: #fff;">
                 <h1>Invalid Request</h1>
                 <p>Missing authorization code. Please try again.</p>
             </body></html>
         """, status_code=400)
 
-    # Verify state token
-    if state not in _oauth_states:
-        return HTMLResponse("""
-            <html><body style="font-family: Arial; padding: 40px; text-align: center;">
-                <h1>Session Expired</h1>
-                <p>Your session has expired. Please try the link again.</p>
-            </body></html>
-        """, status_code=400)
+    # Check for state (stateful flow from our pages)
+    # If no state, it's a direct Discord link (stateless) - that's fine
+    state_data = {}
+    if state and state in _oauth_states:
+        state_data = _oauth_states.pop(state)
 
-    state_data = _oauth_states.pop(state)
-    flow_type = state_data.get("type", "post_purchase")
+    flow_type = state_data.get("type", "direct")  # Default to direct link flow
     order_id = state_data.get("order")
     provided_email = state_data.get("email")
 
@@ -1071,8 +1092,8 @@ async def discord_oauth_callback(code: str = None, state: str = None, error: str
             </body></html>
         """, status_code=400)
 
-    # PRE-PURCHASE FLOW: Just save the link and redirect to store
-    if flow_type == "pre_purchase":
+    # PRE-PURCHASE / DIRECT FLOW: Just save the link and redirect to store
+    if flow_type in ("pre_purchase", "direct"):
         # Save the email -> discord_id mapping
         if discord_email:
             try:
