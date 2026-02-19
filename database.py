@@ -137,6 +137,49 @@ async def claim_pending_order(order_id: int, discord_id: str) -> bool:
         return "UPDATE 1" in result
 
 
+async def init_linked_accounts_table():
+    """Initialize the linked_accounts table for pre-purchase Discord linking."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS linked_accounts (
+                email TEXT PRIMARY KEY,
+                discord_id TEXT NOT NULL,
+                discord_name TEXT,
+                linked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+
+async def save_linked_account(email: str, discord_id: str, discord_name: str = None) -> bool:
+    """Save a pre-purchase Discord link (email -> Discord ID)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        # Upsert - update if exists, insert if not
+        await conn.execute("""
+            INSERT INTO linked_accounts (email, discord_id, discord_name, linked_at)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (email) DO UPDATE SET
+                discord_id = $2,
+                discord_name = $3,
+                linked_at = $4
+        """, email.lower().strip(), discord_id, discord_name, datetime.utcnow())
+        return True
+
+
+async def get_linked_discord_id(email: str) -> Optional[Dict]:
+    """Get Discord ID for a linked email (pre-purchase linking)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM linked_accounts WHERE email = $1",
+            email.lower().strip()
+        )
+        if row:
+            return dict(row)
+    return None
+
+
 async def add_license(
     license_key: str,
     discord_id: str,

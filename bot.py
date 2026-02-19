@@ -23,7 +23,7 @@ from database import (
     get_pending_notifications, get_failed_notifications, init_referrals_table,
     get_referral_count_received, get_referral_count_given, has_been_referred_by,
     add_referral, get_referral_stats, extend_user_license_for_product,
-    get_pending_order_by_email, claim_pending_order
+    get_pending_order_by_email, claim_pending_order, init_linked_accounts_table
 )
 from license_crypto import generate_license_key, get_key_info
 
@@ -39,6 +39,7 @@ class LicenseBot(commands.Bot):
         await init_db()
         await init_notifications_table()
         await init_referrals_table()
+        await init_linked_accounts_table()
         # Sync slash commands globally and to specific guild for instant availability
         await self.tree.sync()
         # Instant sync to your server

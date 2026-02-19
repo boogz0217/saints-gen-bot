@@ -551,6 +551,19 @@ async def shopify_order_webhook(
 
     # Extract Discord ID from order
     discord_id = extract_discord_id(order)
+    discord_name = None
+
+    # If no Discord ID in order, check for pre-linked account
+    if not discord_id and email:
+        try:
+            from database import get_linked_discord_id
+            linked = await get_linked_discord_id(email)
+            if linked:
+                discord_id = linked["discord_id"]
+                discord_name = linked.get("discord_name")
+                print(f"Found pre-linked Discord for {email}: {discord_id} ({discord_name})")
+        except Exception as e:
+            print(f"Error checking linked accounts: {e}")
 
     if not discord_id:
         print(f"No Discord ID found in order #{order_number} - saving as pending order")
@@ -738,10 +751,203 @@ APP_URL = os.getenv("APP_URL", "")
 _oauth_states = {}
 
 
+STORE_URL = os.getenv("STORE_URL", "https://saintservice.store/")
+
+# Store linked Discord accounts (email -> discord_id)
+# In production, this should be in the database
+_linked_accounts = {}
+
+
+@app.get("/", response_class=HTMLResponse)
+async def landing_page():
+    """Landing page with Link Discord button - customers must link before buying."""
+    return HTMLResponse(f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Link Your Discord</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+        <style>
+            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+            body {{
+                font-family: 'Poppins', sans-serif;
+                background: #0a0a0f;
+                color: #fff;
+                min-height: 100vh;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                padding: 20px;
+                position: relative;
+                overflow: hidden;
+            }}
+            /* Stars background */
+            .stars {{
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                pointer-events: none;
+                background: radial-gradient(ellipse at bottom, #1a1a2e 0%, #0a0a0f 100%);
+            }}
+            .stars::after {{
+                content: '';
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background-image:
+                    radial-gradient(2px 2px at 20px 30px, #eee, transparent),
+                    radial-gradient(2px 2px at 40px 70px, rgba(255,255,255,0.8), transparent),
+                    radial-gradient(1px 1px at 90px 40px, #fff, transparent),
+                    radial-gradient(2px 2px at 160px 120px, rgba(255,255,255,0.9), transparent),
+                    radial-gradient(1px 1px at 230px 80px, #fff, transparent),
+                    radial-gradient(2px 2px at 300px 150px, rgba(255,255,255,0.7), transparent),
+                    radial-gradient(1px 1px at 350px 50px, #fff, transparent),
+                    radial-gradient(2px 2px at 420px 180px, rgba(255,255,255,0.8), transparent),
+                    radial-gradient(1px 1px at 500px 90px, #fff, transparent),
+                    radial-gradient(2px 2px at 580px 130px, rgba(255,255,255,0.6), transparent);
+                background-size: 600px 200px;
+                animation: twinkle 5s ease-in-out infinite;
+            }}
+            @keyframes twinkle {{
+                0%, 100% {{ opacity: 1; }}
+                50% {{ opacity: 0.5; }}
+            }}
+            .container {{
+                position: relative;
+                z-index: 1;
+                text-align: center;
+                max-width: 600px;
+            }}
+            h1 {{
+                font-size: 2.8rem;
+                font-weight: 700;
+                margin-bottom: 20px;
+                font-style: italic;
+            }}
+            .subtitle {{
+                font-size: 1rem;
+                color: #ccc;
+                margin-bottom: 10px;
+                line-height: 1.6;
+            }}
+            .privacy {{
+                font-size: 0.9rem;
+                color: #888;
+                margin-bottom: 50px;
+            }}
+            .login-section {{
+                margin-top: 40px;
+            }}
+            .login-title {{
+                font-size: 1.8rem;
+                margin-bottom: 25px;
+            }}
+            .discord-btn {{
+                display: inline-flex;
+                align-items: center;
+                gap: 12px;
+                background: #5865F2;
+                color: #fff;
+                padding: 15px 40px;
+                border-radius: 8px;
+                text-decoration: none;
+                font-size: 1.1rem;
+                font-weight: 600;
+                transition: all 0.3s ease;
+                border: none;
+                cursor: pointer;
+            }}
+            .discord-btn:hover {{
+                background: #4752c4;
+                transform: translateY(-2px);
+                box-shadow: 0 10px 30px rgba(88, 101, 242, 0.4);
+            }}
+            .discord-btn svg {{
+                width: 28px;
+                height: 28px;
+            }}
+            .already-linked {{
+                margin-top: 30px;
+                padding: 15px;
+                background: rgba(76, 175, 80, 0.1);
+                border: 1px solid #4CAF50;
+                border-radius: 8px;
+                display: none;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="stars"></div>
+        <div class="container">
+            <h1>Why Must I Link My Discord?</h1>
+            <p class="subtitle">
+                Linking your Discord Account allows you to gain access instantly to our server roles,
+                allowing you to access your product instantly!
+            </p>
+            <p class="privacy">We do not collect any personal information.</p>
+
+            <div class="login-section">
+                <h2 class="login-title">Login</h2>
+                <a href="/auth/start" class="discord-btn">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515a.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0a12.64 12.64 0 0 0-.617-1.25a.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057a19.9 19.9 0 0 0 5.993 3.03a.078.078 0 0 0 .084-.028a14.09 14.09 0 0 0 1.226-1.994a.076.076 0 0 0-.041-.106a13.107 13.107 0 0 1-1.872-.892a.077.077 0 0 1-.008-.128a10.2 10.2 0 0 0 .372-.292a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127a12.299 12.299 0 0 1-1.873.892a.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028a19.839 19.839 0 0 0 6.002-3.03a.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.956-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.955-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.946 2.418-2.157 2.418z"/>
+                    </svg>
+                    Link Discord
+                </a>
+            </div>
+        </div>
+    </body>
+    </html>
+    """)
+
+
+@app.get("/auth/start")
+async def start_discord_oauth():
+    """Start Discord OAuth flow from the landing page."""
+    if not DISCORD_CLIENT_ID or not DISCORD_REDIRECT_URI:
+        return HTMLResponse("""
+            <html><body style="font-family: Arial; padding: 40px; text-align: center; background: #0a0a0f; color: #fff;">
+                <h1>Configuration Error</h1>
+                <p>Discord OAuth is not configured. Please contact support.</p>
+            </body></html>
+        """, status_code=500)
+
+    # Generate state token for CSRF protection
+    state = secrets.token_urlsafe(32)
+    _oauth_states[state] = {
+        "type": "pre_purchase",
+        "created_at": datetime.utcnow()
+    }
+
+    # Clean old states (older than 10 minutes)
+    cutoff = datetime.utcnow() - timedelta(minutes=10)
+    expired = [k for k, v in _oauth_states.items() if v["created_at"] < cutoff]
+    for k in expired:
+        del _oauth_states[k]
+
+    # Build Discord OAuth URL - request email scope too
+    params = {
+        "client_id": DISCORD_CLIENT_ID,
+        "redirect_uri": DISCORD_REDIRECT_URI,
+        "response_type": "code",
+        "scope": "identify email",
+        "state": state
+    }
+    oauth_url = f"https://discord.com/api/oauth2/authorize?{urllib.parse.urlencode(params)}"
+
+    return RedirectResponse(url=oauth_url)
+
+
 @app.get("/link")
 async def start_discord_link(order: str = None, email: str = None):
     """
-    Start Discord OAuth flow to link a Shopify purchase.
+    Start Discord OAuth flow to link a Shopify purchase (post-purchase).
     User clicks this link from their order confirmation email.
     """
     if not DISCORD_CLIENT_ID or not DISCORD_REDIRECT_URI:
@@ -752,18 +958,14 @@ async def start_discord_link(order: str = None, email: str = None):
             </body></html>
         """, status_code=500)
 
-    # Need either order ID or email
+    # If no email provided, redirect to main landing page
     if not order and not email:
-        return HTMLResponse("""
-            <html><body style="font-family: Arial; padding: 40px; text-align: center;">
-                <h1>Missing Information</h1>
-                <p>Please use the link from your order confirmation email.</p>
-            </body></html>
-        """, status_code=400)
+        return RedirectResponse(url="/")
 
     # Generate state token for CSRF protection
     state = secrets.token_urlsafe(32)
     _oauth_states[state] = {
+        "type": "post_purchase",
         "order": order,
         "email": email.lower().strip() if email else None,
         "created_at": datetime.utcnow()
@@ -780,7 +982,7 @@ async def start_discord_link(order: str = None, email: str = None):
         "client_id": DISCORD_CLIENT_ID,
         "redirect_uri": DISCORD_REDIRECT_URI,
         "response_type": "code",
-        "scope": "identify",
+        "scope": "identify email",
         "state": state
     }
     oauth_url = f"https://discord.com/api/oauth2/authorize?{urllib.parse.urlencode(params)}"
@@ -820,8 +1022,9 @@ async def discord_oauth_callback(code: str = None, state: str = None, error: str
         """, status_code=400)
 
     state_data = _oauth_states.pop(state)
+    flow_type = state_data.get("type", "post_purchase")
     order_id = state_data.get("order")
-    email = state_data.get("email")
+    provided_email = state_data.get("email")
 
     # Exchange code for access token
     async with aiohttp.ClientSession() as session:
@@ -837,7 +1040,7 @@ async def discord_oauth_callback(code: str = None, state: str = None, error: str
                 error_text = await resp.text()
                 print(f"Discord token error: {error_text}")
                 return HTMLResponse("""
-                    <html><body style="font-family: Arial; padding: 40px; text-align: center;">
+                    <html><body style="font-family: Arial; padding: 40px; text-align: center; background: #0a0a0f; color: #fff;">
                         <h1>Authorization Failed</h1>
                         <p>Could not verify your Discord account. Please try again.</p>
                     </body></html>
@@ -850,7 +1053,7 @@ async def discord_oauth_callback(code: str = None, state: str = None, error: str
         async with session.get("https://discord.com/api/users/@me", headers=headers) as resp:
             if resp.status != 200:
                 return HTMLResponse("""
-                    <html><body style="font-family: Arial; padding: 40px; text-align: center;">
+                    <html><body style="font-family: Arial; padding: 40px; text-align: center; background: #0a0a0f; color: #fff;">
                         <h1>Failed to Get User Info</h1>
                         <p>Could not retrieve your Discord information. Please try again.</p>
                     </body></html>
@@ -858,16 +1061,105 @@ async def discord_oauth_callback(code: str = None, state: str = None, error: str
             user_json = await resp.json()
             discord_id = user_json.get("id")
             discord_name = user_json.get("username")
+            discord_email = user_json.get("email")  # From email scope
 
     if not discord_id:
         return HTMLResponse("""
-            <html><body style="font-family: Arial; padding: 40px; text-align: center;">
+            <html><body style="font-family: Arial; padding: 40px; text-align: center; background: #0a0a0f; color: #fff;">
                 <h1>Error</h1>
                 <p>Could not get your Discord ID. Please try again.</p>
             </body></html>
         """, status_code=400)
 
-    # Find pending order by email
+    # PRE-PURCHASE FLOW: Just save the link and redirect to store
+    if flow_type == "pre_purchase":
+        # Save the email -> discord_id mapping
+        if discord_email:
+            try:
+                from database import save_linked_account
+                await save_linked_account(discord_email.lower(), discord_id, discord_name)
+                print(f"Linked account: {discord_email} -> {discord_id} ({discord_name})")
+            except Exception as e:
+                print(f"Error saving linked account (will use in-memory): {e}")
+                _linked_accounts[discord_email.lower()] = {"discord_id": discord_id, "discord_name": discord_name}
+
+        # Success page with redirect to store
+        return HTMLResponse(f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Discord Linked!</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+            <style>
+                body {{
+                    font-family: 'Poppins', sans-serif;
+                    background: #0a0a0f;
+                    color: #fff;
+                    min-height: 100vh;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 20px;
+                }}
+                .container {{
+                    text-align: center;
+                    max-width: 500px;
+                    background: rgba(255,255,255,0.05);
+                    padding: 40px;
+                    border-radius: 15px;
+                }}
+                .checkmark {{
+                    font-size: 4rem;
+                    margin-bottom: 20px;
+                }}
+                h1 {{
+                    color: #4ecca3;
+                    margin-bottom: 15px;
+                }}
+                .info {{
+                    background: rgba(78, 204, 163, 0.1);
+                    border: 1px solid #4ecca3;
+                    padding: 15px;
+                    border-radius: 8px;
+                    margin: 20px 0;
+                }}
+                .shop-btn {{
+                    display: inline-block;
+                    background: #5865F2;
+                    color: #fff;
+                    padding: 15px 40px;
+                    border-radius: 8px;
+                    text-decoration: none;
+                    font-size: 1.1rem;
+                    font-weight: 600;
+                    margin-top: 20px;
+                    transition: all 0.3s ease;
+                }}
+                .shop-btn:hover {{
+                    background: #4752c4;
+                    transform: translateY(-2px);
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="checkmark">✓</div>
+                <h1>Discord Linked!</h1>
+                <p>Your Discord account has been linked.</p>
+                <div class="info">
+                    <p><strong>Discord:</strong> {discord_name}</p>
+                    <p><strong>Email:</strong> {discord_email or 'Not provided'}</p>
+                </div>
+                <p>You can now proceed to purchase!</p>
+                <a href="{STORE_URL}" class="shop-btn">Continue to Store →</a>
+            </div>
+        </body>
+        </html>
+        """)
+
+    # POST-PURCHASE FLOW: Find pending order and create license
+    email = provided_email or discord_email
     try:
         from database import get_pending_order_by_email, claim_pending_order, add_license
         from license_crypto import generate_license_key
@@ -876,7 +1168,7 @@ async def discord_oauth_callback(code: str = None, state: str = None, error: str
 
         if not pending:
             return HTMLResponse(f"""
-                <html><body style="font-family: Arial; padding: 40px; text-align: center;">
+                <html><body style="font-family: Arial; padding: 40px; text-align: center; background: #0a0a0f; color: #fff;">
                     <h1>No Order Found</h1>
                     <p>No pending order found for <strong>{email}</strong>.</p>
                     <p>If you already linked your account, you're all set!</p>
