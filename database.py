@@ -69,6 +69,73 @@ async def init_db():
         except:
             pass
 
+        # Create pending_orders table for Shopify orders without Discord ID
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS pending_orders (
+                id SERIAL PRIMARY KEY,
+                email TEXT NOT NULL,
+                order_number TEXT,
+                customer_name TEXT,
+                product TEXT NOT NULL,
+                days INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                claimed INTEGER DEFAULT 0,
+                claimed_by TEXT,
+                claimed_at TIMESTAMP
+            )
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_pending_email ON pending_orders(email) WHERE claimed = 0
+        """)
+
+
+async def add_pending_order(
+    email: str,
+    product: str,
+    days: int,
+    order_number: str = None,
+    customer_name: str = None
+) -> int:
+    """Add a pending order that needs Discord linking. Returns order ID."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """INSERT INTO pending_orders (email, order_number, customer_name, product, days)
+               VALUES ($1, $2, $3, $4, $5)
+               RETURNING id""",
+            email.lower().strip(), order_number, customer_name, product, days
+        )
+        return row["id"]
+
+
+async def get_pending_order_by_email(email: str) -> Optional[Dict]:
+    """Get unclaimed pending order by email."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """SELECT * FROM pending_orders
+               WHERE email = $1 AND claimed = 0
+               ORDER BY created_at DESC
+               LIMIT 1""",
+            email.lower().strip()
+        )
+        if row:
+            return dict(row)
+    return None
+
+
+async def claim_pending_order(order_id: int, discord_id: str) -> bool:
+    """Mark a pending order as claimed by a Discord user."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            """UPDATE pending_orders
+               SET claimed = 1, claimed_by = $1, claimed_at = $2
+               WHERE id = $3 AND claimed = 0""",
+            discord_id, datetime.utcnow(), order_id
+        )
+        return "UPDATE 1" in result
+
 
 async def add_license(
     license_key: str,

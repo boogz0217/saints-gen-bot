@@ -22,7 +22,8 @@ from database import (
     has_active_license_for_product, close_pool, init_notifications_table,
     get_pending_notifications, get_failed_notifications, init_referrals_table,
     get_referral_count_received, get_referral_count_given, has_been_referred_by,
-    add_referral, get_referral_stats, extend_user_license_for_product
+    add_referral, get_referral_stats, extend_user_license_for_product,
+    get_pending_order_by_email, claim_pending_order
 )
 from license_crypto import generate_license_key, get_key_info
 
@@ -807,6 +808,103 @@ async def status(interaction: discord.Interaction, product: str = None):
             embed.add_field(name="Days Left", value=str(days_left), inline=True)
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="link", description="Link your Shopify purchase to your Discord account")
+@app_commands.describe(email="The email you used for your Shopify purchase")
+async def link_purchase(interaction: discord.Interaction, email: str):
+    """Link a Shopify purchase to claim your license."""
+    await interaction.response.defer(ephemeral=True)
+
+    email = email.lower().strip()
+    discord_id = str(interaction.user.id)
+    discord_name = str(interaction.user)
+
+    # Check for pending order with this email
+    pending = await get_pending_order_by_email(email)
+
+    if not pending:
+        embed = discord.Embed(
+            title="No Order Found",
+            description=f"No pending order found for **{email}**.\n\n"
+                        "Make sure you're using the exact email from your Shopify purchase.",
+            color=discord.Color.red()
+        )
+        embed.add_field(
+            name="Already Linked?",
+            value="If you've already linked your order, use `/status` to check your subscription.",
+            inline=False
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        return
+
+    product = pending["product"]
+    days = pending["days"]
+    order_number = pending.get("order_number", "Unknown")
+
+    # Generate license for this user
+    from datetime import timedelta
+    expires_at = datetime.utcnow() + timedelta(days=days)
+    license_key, _ = generate_license_key(SECRET_KEY, discord_id, days, discord_name)
+
+    # Add license to database
+    await add_license(license_key, discord_id, discord_name, expires_at, product)
+
+    # Mark pending order as claimed
+    await claim_pending_order(pending["id"], discord_id)
+
+    # Assign role
+    try:
+        guild = bot.get_guild(GUILD_ID)
+        if guild:
+            member = guild.get_member(interaction.user.id) or await guild.fetch_member(interaction.user.id)
+            if member:
+                role_id = SUBSCRIBER_ROLE_ID if product == "saints-gen" else SAINTS_SHOT_ROLE_ID
+                if role_id:
+                    role = guild.get_role(role_id)
+                    if role:
+                        await member.add_roles(role)
+                        print(f"Added {product} role to {discord_name}")
+    except Exception as e:
+        print(f"Error assigning role: {e}")
+
+    # Get product name
+    prod_name = "Saint's Gen" if product == "saints-gen" else "Saint's Shot"
+
+    embed = discord.Embed(
+        title="Purchase Linked Successfully!",
+        description=f"Your **{prod_name}** license has been activated!",
+        color=discord.Color.green()
+    )
+    embed.add_field(name="Order", value=f"#{order_number}", inline=True)
+    embed.add_field(name="Duration", value=f"{days} days", inline=True)
+    embed.add_field(name="Expires", value=expires_at.strftime("%Y-%m-%d"), inline=True)
+    embed.add_field(
+        name="How to Use",
+        value="Open the app and login with your Discord. Your account is now authorized!",
+        inline=False
+    )
+    embed.set_footer(text="Thank you for your purchase!")
+
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+    # Also try to DM them
+    try:
+        dm_embed = discord.Embed(
+            title=f"{prod_name} License Activated!",
+            description="Your purchase has been linked to your Discord account.",
+            color=discord.Color.green()
+        )
+        dm_embed.add_field(name="Order", value=f"#{order_number}", inline=True)
+        dm_embed.add_field(name="Expires", value=expires_at.strftime("%Y-%m-%d"), inline=True)
+        dm_embed.add_field(
+            name="Login",
+            value="Just open the app - it will recognize your Discord account automatically!",
+            inline=False
+        )
+        await interaction.user.send(embed=dm_embed)
+    except:
+        pass  # DMs might be disabled
 
 
 @bot.tree.command(name="balance", description="Show your subscription balance publicly")

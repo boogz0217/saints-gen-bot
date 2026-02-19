@@ -549,14 +549,43 @@ async def shopify_order_webhook(
     discord_id = extract_discord_id(order)
 
     if not discord_id:
-        print(f"No Discord ID found in order #{order_number}")
-        # Still return 200 to acknowledge receipt (don't want Shopify to retry)
-        # You might want to handle this case differently (email notification, etc.)
-        return {
-            "success": False,
-            "reason": "no_discord_id",
-            "message": "Order received but no Discord ID found. Customer needs to provide Discord ID."
-        }
+        print(f"No Discord ID found in order #{order_number} - saving as pending order")
+        # Save as pending order for user to claim via /link command
+        license_config = get_license_config(order)
+        product = license_config["product"]
+        days = license_config["days"]
+
+        customer = order.get("customer", {})
+        customer_name = f"{customer.get('first_name', '')} {customer.get('last_name', '')}".strip()
+        if not customer_name:
+            customer_name = email.split("@")[0] if email else "Customer"
+
+        try:
+            from database import add_pending_order
+            order_db_id = await add_pending_order(
+                email=email,
+                product=product,
+                days=days,
+                order_number=str(order_number),
+                customer_name=customer_name
+            )
+            print(f"Pending order saved with ID {order_db_id} - user can claim with /link {email}")
+            return {
+                "success": True,
+                "pending": True,
+                "order_number": order_number,
+                "email": email,
+                "product": product,
+                "days": days,
+                "message": f"Order saved. Customer can use /link {email} in Discord to claim their license."
+            }
+        except Exception as e:
+            print(f"Error saving pending order: {e}")
+            return {
+                "success": False,
+                "reason": "database_error",
+                "message": str(e)
+            }
 
     print(f"Found Discord ID: {discord_id}")
 
