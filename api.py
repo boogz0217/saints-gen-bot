@@ -4,10 +4,12 @@ Runs alongside the Discord bot to provide HTTP endpoints for the macro.
 """
 from fastapi import FastAPI, HTTPException, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse, HTMLResponse
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 import asyncpg
+import aiohttp
 import os
 import traceback
 import hmac
@@ -15,6 +17,8 @@ import hashlib
 import base64
 import json
 import re
+import secrets
+import urllib.parse
 
 # Ed25519 for new token signing
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -569,7 +573,10 @@ async def shopify_order_webhook(
                 order_number=str(order_number),
                 customer_name=customer_name
             )
-            print(f"Pending order saved with ID {order_db_id} - user can claim with /link {email}")
+            # Generate link URL for customer
+            link_url = f"{APP_URL}/link?email={urllib.parse.quote(email)}" if APP_URL else None
+            print(f"Pending order saved with ID {order_db_id}")
+            print(f"Customer link: {link_url}")
             return {
                 "success": True,
                 "pending": True,
@@ -577,7 +584,8 @@ async def shopify_order_webhook(
                 "email": email,
                 "product": product,
                 "days": days,
-                "message": f"Order saved. Customer can use /link {email} in Discord to claim their license."
+                "link_url": link_url,
+                "message": f"Order saved. Customer can link their Discord at: {link_url}"
             }
         except Exception as e:
             print(f"Error saving pending order: {e}")
@@ -717,6 +725,219 @@ async def mark_notification_failed(notification_id: int, error: str = None):
 async def health():
     """Health check for Railway."""
     return {"status": "healthy"}
+
+
+# ==================== DISCORD OAUTH (Link Shopify Purchase) ====================
+
+DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "")
+DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "")
+DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI", "")
+APP_URL = os.getenv("APP_URL", "")
+
+# In-memory state storage (for OAuth security) - in production use Redis
+_oauth_states = {}
+
+
+@app.get("/link")
+async def start_discord_link(order: str = None, email: str = None):
+    """
+    Start Discord OAuth flow to link a Shopify purchase.
+    User clicks this link from their order confirmation email.
+    """
+    if not DISCORD_CLIENT_ID or not DISCORD_REDIRECT_URI:
+        return HTMLResponse("""
+            <html><body style="font-family: Arial; padding: 40px; text-align: center;">
+                <h1>Configuration Error</h1>
+                <p>Discord OAuth is not configured. Please contact support.</p>
+            </body></html>
+        """, status_code=500)
+
+    # Need either order ID or email
+    if not order and not email:
+        return HTMLResponse("""
+            <html><body style="font-family: Arial; padding: 40px; text-align: center;">
+                <h1>Missing Information</h1>
+                <p>Please use the link from your order confirmation email.</p>
+            </body></html>
+        """, status_code=400)
+
+    # Generate state token for CSRF protection
+    state = secrets.token_urlsafe(32)
+    _oauth_states[state] = {
+        "order": order,
+        "email": email.lower().strip() if email else None,
+        "created_at": datetime.utcnow()
+    }
+
+    # Clean old states (older than 10 minutes)
+    cutoff = datetime.utcnow() - timedelta(minutes=10)
+    expired = [k for k, v in _oauth_states.items() if v["created_at"] < cutoff]
+    for k in expired:
+        del _oauth_states[k]
+
+    # Build Discord OAuth URL
+    params = {
+        "client_id": DISCORD_CLIENT_ID,
+        "redirect_uri": DISCORD_REDIRECT_URI,
+        "response_type": "code",
+        "scope": "identify",
+        "state": state
+    }
+    oauth_url = f"https://discord.com/api/oauth2/authorize?{urllib.parse.urlencode(params)}"
+
+    return RedirectResponse(url=oauth_url)
+
+
+@app.get("/auth/callback")
+async def discord_oauth_callback(code: str = None, state: str = None, error: str = None):
+    """
+    Discord OAuth callback - receives the auth code and links the account.
+    """
+    if error:
+        return HTMLResponse(f"""
+            <html><body style="font-family: Arial; padding: 40px; text-align: center;">
+                <h1>Authorization Cancelled</h1>
+                <p>You cancelled the Discord authorization.</p>
+                <p><a href="javascript:window.close()">Close this window</a></p>
+            </body></html>
+        """)
+
+    if not code or not state:
+        return HTMLResponse("""
+            <html><body style="font-family: Arial; padding: 40px; text-align: center;">
+                <h1>Invalid Request</h1>
+                <p>Missing authorization code. Please try again.</p>
+            </body></html>
+        """, status_code=400)
+
+    # Verify state token
+    if state not in _oauth_states:
+        return HTMLResponse("""
+            <html><body style="font-family: Arial; padding: 40px; text-align: center;">
+                <h1>Session Expired</h1>
+                <p>Your session has expired. Please try the link again.</p>
+            </body></html>
+        """, status_code=400)
+
+    state_data = _oauth_states.pop(state)
+    order_id = state_data.get("order")
+    email = state_data.get("email")
+
+    # Exchange code for access token
+    async with aiohttp.ClientSession() as session:
+        token_data = {
+            "client_id": DISCORD_CLIENT_ID,
+            "client_secret": DISCORD_CLIENT_SECRET,
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": DISCORD_REDIRECT_URI
+        }
+        async with session.post("https://discord.com/api/oauth2/token", data=token_data) as resp:
+            if resp.status != 200:
+                error_text = await resp.text()
+                print(f"Discord token error: {error_text}")
+                return HTMLResponse("""
+                    <html><body style="font-family: Arial; padding: 40px; text-align: center;">
+                        <h1>Authorization Failed</h1>
+                        <p>Could not verify your Discord account. Please try again.</p>
+                    </body></html>
+                """, status_code=400)
+            token_json = await resp.json()
+            access_token = token_json.get("access_token")
+
+        # Get user info
+        headers = {"Authorization": f"Bearer {access_token}"}
+        async with session.get("https://discord.com/api/users/@me", headers=headers) as resp:
+            if resp.status != 200:
+                return HTMLResponse("""
+                    <html><body style="font-family: Arial; padding: 40px; text-align: center;">
+                        <h1>Failed to Get User Info</h1>
+                        <p>Could not retrieve your Discord information. Please try again.</p>
+                    </body></html>
+                """, status_code=400)
+            user_json = await resp.json()
+            discord_id = user_json.get("id")
+            discord_name = user_json.get("username")
+
+    if not discord_id:
+        return HTMLResponse("""
+            <html><body style="font-family: Arial; padding: 40px; text-align: center;">
+                <h1>Error</h1>
+                <p>Could not get your Discord ID. Please try again.</p>
+            </body></html>
+        """, status_code=400)
+
+    # Find pending order by email
+    try:
+        from database import get_pending_order_by_email, claim_pending_order, add_license
+        from license_crypto import generate_license_key
+
+        pending = await get_pending_order_by_email(email) if email else None
+
+        if not pending:
+            return HTMLResponse(f"""
+                <html><body style="font-family: Arial; padding: 40px; text-align: center;">
+                    <h1>No Order Found</h1>
+                    <p>No pending order found for <strong>{email}</strong>.</p>
+                    <p>If you already linked your account, you're all set!</p>
+                    <p>Otherwise, please contact support.</p>
+                </body></html>
+            """)
+
+        product = pending["product"]
+        days = pending["days"]
+        order_number = pending.get("order_number", "Unknown")
+
+        # Generate license
+        expires_at = datetime.utcnow() + timedelta(days=days)
+        license_key, _ = generate_license_key(SECRET_KEY, discord_id, days, discord_name)
+
+        # Add to database
+        await add_license(license_key, discord_id, discord_name, expires_at, product)
+
+        # Mark as claimed
+        await claim_pending_order(pending["id"], discord_id)
+
+        prod_name = "Saint's Gen" if product == "saints-gen" else "Saint's Shot"
+
+        return HTMLResponse(f"""
+            <html>
+            <head>
+                <style>
+                    body {{ font-family: Arial, sans-serif; padding: 40px; text-align: center; background: #1a1a2e; color: #eee; }}
+                    .success {{ background: #16213e; border-radius: 10px; padding: 30px; max-width: 500px; margin: 0 auto; }}
+                    h1 {{ color: #4ecca3; }}
+                    .info {{ background: #0f3460; padding: 15px; border-radius: 5px; margin: 20px 0; }}
+                    .highlight {{ color: #4ecca3; font-weight: bold; }}
+                </style>
+            </head>
+            <body>
+                <div class="success">
+                    <h1>✓ Account Linked!</h1>
+                    <p>Your Discord account has been linked to your purchase.</p>
+                    <div class="info">
+                        <p><strong>Product:</strong> <span class="highlight">{prod_name}</span></p>
+                        <p><strong>Order:</strong> #{order_number}</p>
+                        <p><strong>Discord:</strong> {discord_name}</p>
+                        <p><strong>Expires:</strong> {expires_at.strftime("%B %d, %Y")}</p>
+                    </div>
+                    <p>You can now open the app and login with your Discord account!</p>
+                    <p style="margin-top: 30px; color: #888;">You can close this window.</p>
+                </div>
+            </body>
+            </html>
+        """)
+
+    except Exception as e:
+        print(f"Error linking account: {e}")
+        traceback.print_exc()
+        return HTMLResponse(f"""
+            <html><body style="font-family: Arial; padding: 40px; text-align: center;">
+                <h1>Error</h1>
+                <p>An error occurred while linking your account. Please contact support.</p>
+                <p style="color: #888; font-size: 12px;">{str(e)}</p>
+            </body></html>
+        """, status_code=500)
 
 
 # ==================== VERSION CHECK ====================

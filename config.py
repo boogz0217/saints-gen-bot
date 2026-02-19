@@ -34,6 +34,12 @@ SAINTS_SHOT_ROLE_ID = int(os.getenv("SAINTS_SHOT_ROLE_ID", "0"))
 # Store URL for renewal
 STORE_URL = os.getenv("STORE_URL", "https://saintservice.store/")
 
+# Discord OAuth (for linking Shopify purchases)
+DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "")
+DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "")
+DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI", "")  # e.g. https://your-app.railway.app/auth/callback
+APP_URL = os.getenv("APP_URL", "")  # Base URL of your Railway app
+
 # Shopify Integration
 SHOPIFY_WEBHOOK_SECRET = os.getenv("SHOPIFY_WEBHOOK_SECRET", "")  # From Shopify Admin > Webhooks
 SHOPIFY_PRODUCT_MAP = {
