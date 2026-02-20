@@ -990,39 +990,59 @@ async def redeem(interaction: discord.Interaction, email: str):
         await interaction.followup.send(embed=embed, ephemeral=True)
         return
 
-    # Purchase found - create the license
+    # Purchase found - check if user already has a license for this product
     product = purchase["product"]
     days = purchase["days"]
     customer_name = purchase.get("customer_name") or interaction.user.display_name
 
-    # Generate license
     from datetime import timedelta
-    expires_at = datetime.utcnow() + timedelta(days=days)
 
-    license_key, _ = generate_license_key(
-        SECRET_KEY,
-        str(interaction.user.id),
-        days,
-        customer_name
-    )
+    # Check for existing license
+    existing_license = await get_license_by_user(str(interaction.user.id), product)
 
-    # Save license to database
-    success = await add_license(
-        license_key=license_key,
-        discord_id=str(interaction.user.id),
-        discord_name=interaction.user.display_name,
-        expires_at=expires_at,
-        product=product
-    )
+    if existing_license and not existing_license.get("revoked"):
+        # User already has a license - extend it
+        new_expiry = await extend_user_license_for_product(str(interaction.user.id), days, product)
+        if new_expiry:
+            expires_at = datetime.fromisoformat(new_expiry)
+            extended = True
+        else:
+            embed = discord.Embed(
+                title="Error",
+                description="Failed to extend license. Please contact support.",
+                color=discord.Color.red()
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            return
+    else:
+        # No existing license - create new one
+        extended = False
+        expires_at = datetime.utcnow() + timedelta(days=days)
 
-    if not success:
-        embed = discord.Embed(
-            title="Error",
-            description="Failed to create license. Please contact support.",
-            color=discord.Color.red()
+        license_key, _ = generate_license_key(
+            SECRET_KEY,
+            str(interaction.user.id),
+            days,
+            customer_name
         )
-        await interaction.followup.send(embed=embed, ephemeral=True)
-        return
+
+        # Save license to database
+        success = await add_license(
+            license_key=license_key,
+            discord_id=str(interaction.user.id),
+            discord_name=interaction.user.display_name,
+            expires_at=expires_at,
+            product=product
+        )
+
+        if not success:
+            embed = discord.Embed(
+                title="Error",
+                description="Failed to create license. Please contact support.",
+                color=discord.Color.red()
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            return
 
     # Assign role
     role_assigned = False
@@ -1047,13 +1067,20 @@ async def redeem(interaction: discord.Interaction, email: str):
     product_name = "Saint's Gen" if product == "saints-gen" else "Saint's Shot"
 
     # Send success embed
-    embed = discord.Embed(
-        title="Purchase Redeemed!",
-        description=f"Your **{product_name}** license has been activated!",
-        color=discord.Color.green()
-    )
+    if extended:
+        embed = discord.Embed(
+            title="License Extended!",
+            description=f"**+{days} days** added to your **{product_name}** license!",
+            color=discord.Color.green()
+        )
+    else:
+        embed = discord.Embed(
+            title="Purchase Redeemed!",
+            description=f"Your **{product_name}** license has been activated!",
+            color=discord.Color.green()
+        )
     embed.add_field(name="Product", value=product_name, inline=True)
-    embed.add_field(name="Duration", value=f"{days} days", inline=True)
+    embed.add_field(name="Days Added", value=f"+{days} days", inline=True)
     embed.add_field(name="Expires", value=expires_at.strftime("%B %d, %Y"), inline=True)
 
     if role_assigned:
@@ -1075,13 +1102,20 @@ async def redeem(interaction: discord.Interaction, email: str):
 
     # Also DM the user their license info
     try:
-        dm_embed = discord.Embed(
-            title=f"🎉 {product_name} License Activated!",
-            description="Thank you for your purchase!",
-            color=discord.Color.green()
-        )
+        if extended:
+            dm_embed = discord.Embed(
+                title=f"🎉 {product_name} License Extended!",
+                description=f"**+{days} days** added to your license!",
+                color=discord.Color.green()
+            )
+        else:
+            dm_embed = discord.Embed(
+                title=f"🎉 {product_name} License Activated!",
+                description="Thank you for your purchase!",
+                color=discord.Color.green()
+            )
         dm_embed.add_field(name="Product", value=product_name, inline=True)
-        dm_embed.add_field(name="Duration", value=f"{days} days", inline=True)
+        dm_embed.add_field(name="Days Added", value=f"+{days} days", inline=True)
         dm_embed.add_field(name="Expires", value=expires_at.strftime("%B %d, %Y"), inline=True)
         dm_embed.add_field(
             name="Next Steps",
