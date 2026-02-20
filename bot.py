@@ -1128,6 +1128,25 @@ async def redeem(interaction: discord.Interaction, email: str):
 
     print(f"Purchase redeemed by {interaction.user} ({interaction.user.id}) - {email} - {product_name} {days} days")
 
+    # Log to redemption log channel
+    try:
+        log_channel = bot.get_channel(1290509478445322292)
+        if log_channel:
+            log_embed = discord.Embed(
+                title="License Extended" if extended else "New License",
+                color=discord.Color.blue()
+            )
+            log_embed.add_field(name="User", value=f"{interaction.user.mention} (`{interaction.user.id}`)", inline=False)
+            log_embed.add_field(name="Product", value=product_name, inline=True)
+            log_embed.add_field(name="Days", value=f"+{days}", inline=True)
+            log_embed.add_field(name="Expires", value=expires_at.strftime("%B %d, %Y"), inline=True)
+            log_embed.add_field(name="Email", value=f"||{email}||", inline=False)
+            log_embed.set_footer(text=f"Order: {purchase.get('order_number', 'N/A')}")
+            log_embed.timestamp = datetime.utcnow()
+            await log_channel.send(embed=log_embed)
+    except Exception as e:
+        print(f"Failed to log redemption: {e}")
+
 
 # ==================== REFERRAL SYSTEM ====================
 
