@@ -1,5 +1,6 @@
 """Async PostgreSQL database operations for license management."""
 import asyncpg
+import ssl
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 import os
@@ -12,6 +13,17 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 _pool: Optional[asyncpg.Pool] = None
 
 
+def _parse_database_url(url: str) -> tuple:
+    """Parse DATABASE_URL and extract SSL mode if present."""
+    # Remove sslmode parameter from URL (asyncpg handles it separately)
+    if '?sslmode=' in url:
+        base_url, params = url.split('?', 1)
+        # Check if SSL is required
+        use_ssl = 'sslmode=require' in params or 'sslmode=verify' in params
+        return base_url, use_ssl
+    return url, False
+
+
 async def get_pool() -> asyncpg.Pool:
     """Get or create the connection pool."""
     global _pool
@@ -20,7 +32,18 @@ async def get_pool() -> asyncpg.Pool:
             print("ERROR: DATABASE_URL environment variable is not set!")
             print("Please add a PostgreSQL database to your Railway project.")
             sys.exit(1)
-        _pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=10)
+
+        # Parse URL and handle SSL
+        clean_url, use_ssl = _parse_database_url(DATABASE_URL)
+
+        if use_ssl:
+            # Create SSL context for secure connection
+            ssl_ctx = ssl.create_default_context()
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = ssl.CERT_NONE
+            _pool = await asyncpg.create_pool(clean_url, min_size=1, max_size=10, ssl=ssl_ctx)
+        else:
+            _pool = await asyncpg.create_pool(clean_url, min_size=1, max_size=10)
     return _pool
 
 
