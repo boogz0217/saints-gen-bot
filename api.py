@@ -1397,6 +1397,222 @@ async def get_version(product: Optional[str] = None):
     }
 
 
+# ==================== REDEMPTION CODE LOOKUP ====================
+
+@app.get("/code", response_class=HTMLResponse)
+async def code_lookup_page():
+    """Page where customers can look up their redemption code by email."""
+    return HTMLResponse(f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Get Your Redemption Code</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+        <style>
+            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+            body {{
+                font-family: 'Poppins', sans-serif;
+                background: #0a0a0f;
+                color: #fff;
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 20px;
+            }}
+            .container {{
+                background: rgba(255,255,255,0.05);
+                padding: 40px;
+                border-radius: 16px;
+                max-width: 450px;
+                width: 100%;
+                text-align: center;
+                border: 1px solid rgba(255,255,255,0.1);
+            }}
+            h1 {{
+                font-size: 1.8rem;
+                margin-bottom: 10px;
+                color: #4ecca3;
+            }}
+            p {{
+                color: #888;
+                margin-bottom: 30px;
+                font-size: 0.95rem;
+            }}
+            input {{
+                width: 100%;
+                padding: 15px;
+                border-radius: 8px;
+                border: 1px solid #333;
+                background: #1a1a2e;
+                color: #fff;
+                font-size: 1rem;
+                margin-bottom: 15px;
+            }}
+            input:focus {{
+                outline: none;
+                border-color: #4ecca3;
+            }}
+            button {{
+                width: 100%;
+                padding: 15px;
+                border-radius: 8px;
+                border: none;
+                background: #5865F2;
+                color: #fff;
+                font-size: 1rem;
+                font-weight: 600;
+                cursor: pointer;
+                transition: background 0.3s;
+            }}
+            button:hover {{
+                background: #4752c4;
+            }}
+            .result {{
+                margin-top: 25px;
+                padding: 20px;
+                border-radius: 8px;
+                display: none;
+            }}
+            .result.success {{
+                background: rgba(76, 175, 80, 0.1);
+                border: 1px solid #4CAF50;
+            }}
+            .result.error {{
+                background: rgba(244, 67, 54, 0.1);
+                border: 1px solid #f44336;
+            }}
+            .code {{
+                font-size: 1.5rem;
+                font-weight: 700;
+                color: #4ecca3;
+                letter-spacing: 2px;
+                margin: 10px 0;
+            }}
+            .instructions {{
+                font-size: 0.85rem;
+                color: #888;
+                margin-top: 15px;
+            }}
+            .copy-btn {{
+                margin-top: 10px;
+                padding: 10px 20px;
+                width: auto;
+                background: #333;
+            }}
+            .copy-btn:hover {{
+                background: #444;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Get Your Redemption Code</h1>
+            <p>Enter the email you used for your purchase</p>
+
+            <form id="lookup-form">
+                <input type="email" id="email" placeholder="your@email.com" required>
+                <button type="submit">Find My Code</button>
+            </form>
+
+            <div id="result" class="result">
+                <div id="result-content"></div>
+            </div>
+        </div>
+
+        <script>
+            document.getElementById('lookup-form').addEventListener('submit', async (e) => {{
+                e.preventDefault();
+                const email = document.getElementById('email').value;
+                const result = document.getElementById('result');
+                const content = document.getElementById('result-content');
+
+                result.style.display = 'none';
+
+                try {{
+                    const res = await fetch('/code/lookup?email=' + encodeURIComponent(email));
+                    const data = await res.json();
+
+                    if (data.success) {{
+                        result.className = 'result success';
+                        content.innerHTML = `
+                            <div>Your redemption code:</div>
+                            <div class="code" id="code-text">${{data.code}}</div>
+                            <button class="copy-btn" onclick="copyCode()">Copy Code</button>
+                            <div class="instructions">
+                                Join our Discord server and use:<br>
+                                <strong>/redeem ${{data.code}}</strong>
+                            </div>
+                        `;
+                    }} else {{
+                        result.className = 'result error';
+                        content.innerHTML = data.message || 'No code found for this email.';
+                    }}
+                    result.style.display = 'block';
+                }} catch (err) {{
+                    result.className = 'result error';
+                    content.innerHTML = 'Error looking up code. Please try again.';
+                    result.style.display = 'block';
+                }}
+            }});
+
+            function copyCode() {{
+                const code = document.getElementById('code-text').textContent;
+                navigator.clipboard.writeText(code).then(() => {{
+                    alert('Code copied!');
+                }});
+            }}
+        </script>
+    </body>
+    </html>
+    """)
+
+
+@app.get("/code/lookup")
+async def lookup_redemption_code(email: str):
+    """API endpoint to look up redemption code by email."""
+    if not email:
+        return {"success": False, "message": "Email is required"}
+
+    try:
+        pool = await get_api_pool()
+        async with pool.acquire() as conn:
+            # Find unredeemed code for this email
+            row = await conn.fetchrow(
+                """SELECT code, product, days, redeemed
+                   FROM redemption_codes
+                   WHERE LOWER(email) = LOWER($1)
+                   ORDER BY created_at DESC
+                   LIMIT 1""",
+                email.strip()
+            )
+
+            if not row:
+                return {
+                    "success": False,
+                    "message": "No purchase found for this email. Please check the email address or contact support."
+                }
+
+            if row["redeemed"]:
+                return {
+                    "success": False,
+                    "message": "This code has already been redeemed. If you need help, contact support."
+                }
+
+            product_name = "Saint's Gen" if row["product"] == "saints-gen" else "Saint's Shot"
+
+            return {
+                "success": True,
+                "code": row["code"],
+                "product": product_name,
+                "days": row["days"]
+            }
+    except Exception as e:
+        print(f"Error looking up code: {e}")
+        return {"success": False, "message": "Error looking up code. Please try again."}
+
+
 # ==================== ADMIN ENDPOINTS ====================
 
 ADMIN_SECRET = os.getenv("ADMIN_SECRET", SECRET_KEY)  # Use SECRET_KEY as fallback
