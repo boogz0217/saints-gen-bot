@@ -23,7 +23,8 @@ from database import (
     get_pending_notifications, get_failed_notifications, init_referrals_table,
     get_referral_count_received, get_referral_count_given, has_been_referred_by,
     add_referral, get_referral_stats, extend_user_license_for_product,
-    get_pending_order_by_email, claim_pending_order, init_linked_accounts_table
+    get_pending_order_by_email, claim_pending_order, init_linked_accounts_table,
+    init_redemption_codes_table, redeem_code
 )
 from license_crypto import generate_license_key, get_key_info
 
@@ -40,6 +41,7 @@ class LicenseBot(commands.Bot):
         await init_notifications_table()
         await init_referrals_table()
         await init_linked_accounts_table()
+        await init_redemption_codes_table()
         # Sync slash commands globally and to specific guild for instant availability
         await self.tree.sync()
         # Instant sync to your server
@@ -964,6 +966,128 @@ async def balance(interaction: discord.Interaction, product: str = None):
 
     embed.set_thumbnail(url=interaction.user.display_avatar.url)
     await interaction.response.send_message(embed=embed)
+
+
+# ==================== REDEMPTION SYSTEM ====================
+
+@bot.tree.command(name="redeem", description="Redeem a purchase code to activate your license")
+@app_commands.describe(code="Your redemption code from your purchase (e.g., SAINT-A7X9B2)")
+async def redeem(interaction: discord.Interaction, code: str):
+    """Redeem a purchase code to get your license and role."""
+    await interaction.response.defer(ephemeral=True)
+
+    # Try to redeem the code
+    code_data = await redeem_code(code.upper().strip(), str(interaction.user.id))
+
+    if not code_data:
+        embed = discord.Embed(
+            title="Invalid Code",
+            description="This code is invalid or has already been redeemed.\n\nPlease check your code and try again. If you believe this is an error, contact support.",
+            color=discord.Color.red()
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        return
+
+    # Code is valid - create the license
+    product = code_data["product"]
+    days = code_data["days"]
+    customer_name = code_data.get("customer_name") or interaction.user.display_name
+
+    # Generate license
+    from datetime import timedelta
+    expires_at = datetime.utcnow() + timedelta(days=days)
+
+    license_key, _ = generate_license_key(
+        SECRET_KEY,
+        str(interaction.user.id),
+        days,
+        customer_name
+    )
+
+    # Save license to database
+    success = await add_license(
+        license_key=license_key,
+        discord_id=str(interaction.user.id),
+        discord_name=interaction.user.display_name,
+        expires_at=expires_at,
+        product=product
+    )
+
+    if not success:
+        embed = discord.Embed(
+            title="Error",
+            description="Failed to create license. Please contact support.",
+            color=discord.Color.red()
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        return
+
+    # Assign role
+    role_assigned = False
+    role_name = ""
+    if GUILD_ID:
+        try:
+            guild = bot.get_guild(GUILD_ID)
+            if guild:
+                member = guild.get_member(interaction.user.id)
+                if member:
+                    role_id = SAINTS_SHOT_ROLE_ID if product == "saints-shot" else SUBSCRIBER_ROLE_ID
+                    if role_id:
+                        role = guild.get_role(role_id)
+                        if role:
+                            await member.add_roles(role, reason=f"Redeemed code: {code}")
+                            role_assigned = True
+                            role_name = role.name
+        except Exception as e:
+            print(f"Error assigning role: {e}")
+
+    # Product name for display
+    product_name = "Saint's Gen" if product == "saints-gen" else "Saint's Shot"
+
+    # Send success embed
+    embed = discord.Embed(
+        title="Code Redeemed Successfully!",
+        description=f"Your **{product_name}** license has been activated!",
+        color=discord.Color.green()
+    )
+    embed.add_field(name="Product", value=product_name, inline=True)
+    embed.add_field(name="Duration", value=f"{days} days", inline=True)
+    embed.add_field(name="Expires", value=expires_at.strftime("%B %d, %Y"), inline=True)
+
+    if role_assigned:
+        embed.add_field(name="Role", value=f"✅ {role_name} assigned", inline=False)
+
+    embed.add_field(
+        name="Next Steps",
+        value="Open the app and it will recognize your Discord account automatically!",
+        inline=False
+    )
+
+    embed.set_footer(text=f"Code: {code}")
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+    # Also DM the user their license info
+    try:
+        dm_embed = discord.Embed(
+            title=f"🎉 {product_name} License Activated!",
+            description="Thank you for your purchase! Here are your license details:",
+            color=discord.Color.green()
+        )
+        dm_embed.add_field(name="Product", value=product_name, inline=True)
+        dm_embed.add_field(name="Duration", value=f"{days} days", inline=True)
+        dm_embed.add_field(name="Expires", value=expires_at.strftime("%B %d, %Y"), inline=True)
+        dm_embed.add_field(
+            name="How to Use",
+            value="Just open the app - it will recognize your Discord account automatically!",
+            inline=False
+        )
+        if STORE_URL:
+            dm_embed.add_field(name="Store", value=STORE_URL, inline=False)
+        await interaction.user.send(embed=dm_embed)
+    except:
+        pass  # DMs might be disabled
+
+    print(f"Code {code} redeemed by {interaction.user} ({interaction.user.id}) - {product_name} {days} days")
 
 
 # ==================== REFERRAL SYSTEM ====================

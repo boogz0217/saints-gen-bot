@@ -521,6 +521,15 @@ def get_license_config(order: dict) -> dict:
     return {"product": "saints-gen", "days": DEFAULT_LICENSE_DAYS}
 
 
+def generate_redemption_code() -> str:
+    """Generate a unique redemption code like SAINT-A7X9B2."""
+    import random
+    import string
+    chars = string.ascii_uppercase + string.digits
+    code = ''.join(random.choices(chars, k=6))
+    return f"SAINT-{code}"
+
+
 @app.post("/shopify/webhook")
 async def shopify_order_webhook(
     request: Request,
@@ -529,7 +538,7 @@ async def shopify_order_webhook(
 ):
     """
     Handle Shopify order webhooks.
-    Automatically generates license keys when orders are paid.
+    Generates a redemption code that customers use with /redeem in Discord.
     """
     # Get raw body for HMAC verification
     body = await request.body()
@@ -550,123 +559,70 @@ async def shopify_order_webhook(
     email = order.get("email", "unknown")
     print(f"Received Shopify webhook: Order #{order_number} (ID: {order_id}) for {email}")
 
-    # Extract Discord ID from order
-    discord_id = extract_discord_id(order)
-    discord_name = None
-
-    # If no Discord ID in order, check for pre-linked account
-    if not discord_id and email:
-        try:
-            from database import get_linked_discord_id
-            linked = await get_linked_discord_id(email)
-            if linked:
-                discord_id = linked["discord_id"]
-                discord_name = linked.get("discord_name")
-                print(f"Found pre-linked Discord for {email}: {discord_id} ({discord_name})")
-        except Exception as e:
-            print(f"Error checking linked accounts: {e}")
-
-    if not discord_id:
-        print(f"No Discord ID found in order #{order_number} - saving as pending order")
-        # Save as pending order for user to claim via /link command
-        license_config = get_license_config(order)
-        product = license_config["product"]
-        days = license_config["days"]
-
-        customer = order.get("customer", {})
-        customer_name = f"{customer.get('first_name', '')} {customer.get('last_name', '')}".strip()
-        if not customer_name:
-            customer_name = email.split("@")[0] if email else "Customer"
-
-        try:
-            from database import add_pending_order
-            order_db_id = await add_pending_order(
-                email=email,
-                product=product,
-                days=days,
-                order_number=str(order_number),
-                customer_name=customer_name
-            )
-            # Generate link URL for customer
-            link_url = f"{APP_URL}/link?email={urllib.parse.quote(email)}" if APP_URL else None
-            print(f"Pending order saved with ID {order_db_id}")
-            print(f"Customer link: {link_url}")
-            return {
-                "success": True,
-                "pending": True,
-                "order_number": order_number,
-                "email": email,
-                "product": product,
-                "days": days,
-                "link_url": link_url,
-                "message": f"Order saved. Customer can link their Discord at: {link_url}"
-            }
-        except Exception as e:
-            print(f"Error saving pending order: {e}")
-            return {
-                "success": False,
-                "reason": "database_error",
-                "message": str(e)
-            }
-
-    print(f"Found Discord ID: {discord_id}")
-
     # Get license configuration based on product
     license_config = get_license_config(order)
     product = license_config["product"]
     days = license_config["days"]
 
-    print(f"Generating {product} license for {days} days")
-
-    # Get customer name for the license
+    # Get customer name
     customer = order.get("customer", {})
     customer_name = f"{customer.get('first_name', '')} {customer.get('last_name', '')}".strip()
     if not customer_name:
         customer_name = email.split("@")[0] if email else "Customer"
 
-    # Generate the license key
-    license_key, expires_at = generate_license_key(
-        SECRET_KEY,
-        discord_id,
-        days,
-        customer_name
-    )
+    # Generate unique redemption code
+    redemption_code = generate_redemption_code()
 
-    # Store in database
-    try:
-        pool = await get_api_pool()
-        async with pool.acquire() as conn:
-            # Save the license
-            await conn.execute(
-                """INSERT INTO licenses (license_key, discord_id, discord_name, expires_at, product)
-                   VALUES ($1, $2, $3, $4, $5)""",
-                license_key, discord_id, customer_name, expires_at, product
-            )
-            print(f"License saved to database for {discord_id}")
+    # Make sure code is unique (retry if needed)
+    max_attempts = 5
+    for attempt in range(max_attempts):
+        try:
+            pool = await get_api_pool()
+            async with pool.acquire() as conn:
+                # Create redemption_codes table if not exists
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS redemption_codes (
+                        code TEXT PRIMARY KEY,
+                        email TEXT,
+                        customer_name TEXT,
+                        product TEXT NOT NULL,
+                        days INTEGER NOT NULL,
+                        order_number TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        redeemed INTEGER DEFAULT 0,
+                        redeemed_by TEXT,
+                        redeemed_at TIMESTAMP
+                    )
+                """)
 
-            # Queue notification in database (persists across restarts!)
-            await conn.execute(
-                """INSERT INTO shopify_notifications
-                   (discord_id, license_key, expires_at, product, customer_name, email, order_number)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7)""",
-                discord_id, license_key, expires_at, product, customer_name, email, str(order_number)
-            )
-            print(f"Notification queued in database for order #{order_number}")
+                # Insert the code
+                await conn.execute(
+                    """INSERT INTO redemption_codes (code, email, customer_name, product, days, order_number)
+                       VALUES ($1, $2, $3, $4, $5, $6)""",
+                    redemption_code, email, customer_name, product, days, str(order_number)
+                )
+                print(f"Redemption code created: {redemption_code} for order #{order_number}")
+                break
+        except Exception as e:
+            if "duplicate key" in str(e).lower() or "unique" in str(e).lower():
+                redemption_code = generate_redemption_code()
+                continue
+            print(f"Database error creating redemption code: {e}")
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail="Failed to create redemption code")
+    else:
+        raise HTTPException(status_code=500, detail="Failed to generate unique code")
 
-    except Exception as e:
-        print(f"Database error saving license: {e}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail="Failed to save license")
-
-    print(f"License generated successfully for order #{order_number}")
+    print(f"Order #{order_number}: Redemption code {redemption_code} ready for {product} ({days} days)")
 
     return {
         "success": True,
         "order_number": order_number,
-        "discord_id": discord_id,
+        "email": email,
         "product": product,
         "days": days,
-        "expires_at": expires_at.isoformat()
+        "redemption_code": redemption_code,
+        "message": f"Customer should use /redeem {redemption_code} in Discord to activate their license."
     }
 
 

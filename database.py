@@ -722,3 +722,106 @@ async def extend_user_license_for_product(discord_id: str, days: int, product: s
             return None
 
         return await extend_license(row["license_key"], days)
+
+
+# ==================== REDEMPTION CODES ====================
+
+async def init_redemption_codes_table():
+    """Create the redemption_codes table if it doesn't exist."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS redemption_codes (
+                code TEXT PRIMARY KEY,
+                email TEXT,
+                customer_name TEXT,
+                product TEXT NOT NULL,
+                days INTEGER NOT NULL,
+                order_number TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                redeemed INTEGER DEFAULT 0,
+                redeemed_by TEXT,
+                redeemed_at TIMESTAMP
+            )
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_redemption_codes_unredeemed
+            ON redemption_codes(redeemed) WHERE redeemed = 0
+        """)
+
+
+async def create_redemption_code(
+    code: str,
+    product: str,
+    days: int,
+    email: str = None,
+    customer_name: str = None,
+    order_number: str = None
+) -> bool:
+    """Create a new redemption code. Returns True if successful."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO redemption_codes (code, email, customer_name, product, days, order_number)
+                   VALUES ($1, $2, $3, $4, $5, $6)""",
+                code, email, customer_name, product, days, order_number
+            )
+        return True
+    except Exception as e:
+        print(f"Error creating redemption code: {e}")
+        return False
+
+
+async def get_redemption_code(code: str) -> Optional[Dict]:
+    """Get redemption code info."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM redemption_codes WHERE code = $1",
+            code.upper().strip()
+        )
+        if row:
+            return dict(row)
+    return None
+
+
+async def redeem_code(code: str, discord_id: str) -> Optional[Dict]:
+    """
+    Redeem a code for a Discord user.
+    Returns the code info if successful, None if code not found or already redeemed.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        # Get the code
+        row = await conn.fetchrow(
+            "SELECT * FROM redemption_codes WHERE code = $1 AND redeemed = 0",
+            code.upper().strip()
+        )
+        if not row:
+            return None
+
+        # Mark as redeemed
+        await conn.execute(
+            """UPDATE redemption_codes
+               SET redeemed = 1, redeemed_by = $1, redeemed_at = $2
+               WHERE code = $3""",
+            discord_id, datetime.utcnow(), code.upper().strip()
+        )
+
+        return dict(row)
+
+
+async def get_redemption_stats() -> Dict:
+    """Get redemption code statistics."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        total = await conn.fetchval("SELECT COUNT(*) FROM redemption_codes")
+        redeemed = await conn.fetchval("SELECT COUNT(*) FROM redemption_codes WHERE redeemed = 1")
+        pending = await conn.fetchval("SELECT COUNT(*) FROM redemption_codes WHERE redeemed = 0")
+
+        return {
+            "total": total or 0,
+            "redeemed": redeemed or 0,
+            "pending": pending or 0
+        }
