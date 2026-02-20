@@ -775,16 +775,35 @@ async def get_shopify_script():
 <!-- Discord ID Capture Script - Add this to your theme.liquid before </head> -->
 <script>
 (function() {
-    // Get Discord ID from URL parameter
-    const urlParams = new URLSearchParams(window.location.search);
-    const discordId = urlParams.get('did');
-    const discordName = urlParams.get('dname');
+    // Get Discord ID from URL hash fragment (survives Shopify redirects)
+    // Supports both #did=xxx&dname=yyy and ?did=xxx&dname=yyy formats
+    var discordId = null;
+    var discordName = null;
+
+    // First check hash fragment (preferred - survives redirects)
+    if (window.location.hash) {
+        var hashParams = new URLSearchParams(window.location.hash.substring(1));
+        discordId = hashParams.get('did');
+        discordName = hashParams.get('dname');
+    }
+
+    // Fallback to query params for backwards compatibility
+    if (!discordId) {
+        var urlParams = new URLSearchParams(window.location.search);
+        discordId = urlParams.get('did');
+        discordName = urlParams.get('dname');
+    }
 
     // If Discord ID found, save to localStorage
     if (discordId) {
         localStorage.setItem('discord_id', discordId);
         localStorage.setItem('discord_name', discordName || 'User');
         console.log('Discord ID saved:', discordId);
+
+        // Clean up the URL (remove hash fragment) so it looks nicer
+        if (window.location.hash && window.history.replaceState) {
+            window.history.replaceState(null, '', window.location.pathname + window.location.search);
+        }
     }
 
     // Add Discord ID to cart before checkout
@@ -1235,9 +1254,9 @@ async def discord_oauth_callback(code: str = None, state: str = None, error: str
 
     # PRE-PURCHASE / DIRECT FLOW: Redirect to store with Discord ID in URL
     if flow_type in ("pre_purchase", "direct"):
-        # Redirect to store with Discord ID as parameter
-        # Shopify theme script will capture this and add to cart
-        redirect_url = f"{STORE_URL}?did={discord_id}&dname={urllib.parse.quote(discord_name or 'User')}"
+        # Redirect to store with Discord ID as hash fragment (not query param)
+        # Hash fragments survive Shopify redirects since they're client-side only
+        redirect_url = f"{STORE_URL}#did={discord_id}&dname={urllib.parse.quote(discord_name or 'User')}"
         print(f"Discord linked: {discord_id} ({discord_name}) - redirecting to {redirect_url}")
 
         # Show success page with auto-redirect
