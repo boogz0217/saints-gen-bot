@@ -1059,9 +1059,15 @@ async def redeem(interaction: discord.Interaction, email: str):
     if role_assigned:
         embed.add_field(name="Role", value=f"✅ {role_name} assigned", inline=False)
 
+    # Product-specific instructions link
+    if product == "saints-gen":
+        instructions_link = "https://discordapp.com/channels/1290387028185448469/1467010934613737516"
+    else:
+        instructions_link = "https://discordapp.com/channels/1290387028185448469/1469757937382723727"
+
     embed.add_field(
         name="Next Steps",
-        value="Open the app and it will recognize your Discord account automatically!",
+        value=f"Go to {instructions_link} for further instructions",
         inline=False
     )
 
@@ -1078,8 +1084,8 @@ async def redeem(interaction: discord.Interaction, email: str):
         dm_embed.add_field(name="Duration", value=f"{days} days", inline=True)
         dm_embed.add_field(name="Expires", value=expires_at.strftime("%B %d, %Y"), inline=True)
         dm_embed.add_field(
-            name="How to Use",
-            value="Just open the app - it will recognize your Discord account automatically!",
+            name="Next Steps",
+            value=f"Go to {instructions_link} for further instructions",
             inline=False
         )
         await interaction.user.send(embed=dm_embed)
