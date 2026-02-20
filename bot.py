@@ -24,7 +24,7 @@ from database import (
     get_referral_count_received, get_referral_count_given, has_been_referred_by,
     add_referral, get_referral_stats, extend_user_license_for_product,
     get_pending_order_by_email, claim_pending_order, init_linked_accounts_table,
-    init_redemption_codes_table, redeem_code
+    init_purchases_table, redeem_by_email
 )
 from license_crypto import generate_license_key, get_key_info
 
@@ -41,7 +41,7 @@ class LicenseBot(commands.Bot):
         await init_notifications_table()
         await init_referrals_table()
         await init_linked_accounts_table()
-        await init_redemption_codes_table()
+        await init_purchases_table()
         # Sync slash commands globally and to specific guild for instant availability
         await self.tree.sync()
         # Instant sync to your server
@@ -970,28 +970,30 @@ async def balance(interaction: discord.Interaction, product: str = None):
 
 # ==================== REDEMPTION SYSTEM ====================
 
-@bot.tree.command(name="redeem", description="Redeem a purchase code to activate your license")
-@app_commands.describe(code="Your redemption code from your purchase (e.g., SAINT-A7X9B2)")
-async def redeem(interaction: discord.Interaction, code: str):
-    """Redeem a purchase code to get your license and role."""
+@bot.tree.command(name="redeem", description="Redeem your purchase using your email")
+@app_commands.describe(email="The email you used for your Shopify purchase")
+async def redeem(interaction: discord.Interaction, email: str):
+    """Redeem a purchase using your email to get your license and role."""
     await interaction.response.defer(ephemeral=True)
 
-    # Try to redeem the code
-    code_data = await redeem_code(code.upper().strip(), str(interaction.user.id))
+    # Try to redeem by email
+    purchase = await redeem_by_email(email.strip(), str(interaction.user.id))
 
-    if not code_data:
+    if not purchase:
         embed = discord.Embed(
-            title="Invalid Code",
-            description="This code is invalid or has already been redeemed.\n\nPlease check your code and try again. If you believe this is an error, contact support.",
+            title="No Purchase Found",
+            description=f"No unredeemed purchase found for **{email}**\n\n"
+                        "Make sure you're using the exact email from your Shopify purchase.\n"
+                        "If you already redeemed, use `/status` to check your license.",
             color=discord.Color.red()
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
         return
 
-    # Code is valid - create the license
-    product = code_data["product"]
-    days = code_data["days"]
-    customer_name = code_data.get("customer_name") or interaction.user.display_name
+    # Purchase found - create the license
+    product = purchase["product"]
+    days = purchase["days"]
+    customer_name = purchase.get("customer_name") or interaction.user.display_name
 
     # Generate license
     from datetime import timedelta
@@ -1035,7 +1037,7 @@ async def redeem(interaction: discord.Interaction, code: str):
                     if role_id:
                         role = guild.get_role(role_id)
                         if role:
-                            await member.add_roles(role, reason=f"Redeemed code: {code}")
+                            await member.add_roles(role, reason=f"Redeemed purchase: {email}")
                             role_assigned = True
                             role_name = role.name
         except Exception as e:
@@ -1046,7 +1048,7 @@ async def redeem(interaction: discord.Interaction, code: str):
 
     # Send success embed
     embed = discord.Embed(
-        title="Code Redeemed Successfully!",
+        title="Purchase Redeemed!",
         description=f"Your **{product_name}** license has been activated!",
         color=discord.Color.green()
     )
@@ -1063,14 +1065,13 @@ async def redeem(interaction: discord.Interaction, code: str):
         inline=False
     )
 
-    embed.set_footer(text=f"Code: {code}")
     await interaction.followup.send(embed=embed, ephemeral=True)
 
     # Also DM the user their license info
     try:
         dm_embed = discord.Embed(
             title=f"🎉 {product_name} License Activated!",
-            description="Thank you for your purchase! Here are your license details:",
+            description="Thank you for your purchase!",
             color=discord.Color.green()
         )
         dm_embed.add_field(name="Product", value=product_name, inline=True)
@@ -1081,13 +1082,11 @@ async def redeem(interaction: discord.Interaction, code: str):
             value="Just open the app - it will recognize your Discord account automatically!",
             inline=False
         )
-        if STORE_URL:
-            dm_embed.add_field(name="Store", value=STORE_URL, inline=False)
         await interaction.user.send(embed=dm_embed)
     except:
         pass  # DMs might be disabled
 
-    print(f"Code {code} redeemed by {interaction.user} ({interaction.user.id}) - {product_name} {days} days")
+    print(f"Purchase redeemed by {interaction.user} ({interaction.user.id}) - {email} - {product_name} {days} days")
 
 
 # ==================== REFERRAL SYSTEM ====================
