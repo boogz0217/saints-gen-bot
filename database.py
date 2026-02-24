@@ -819,3 +819,64 @@ async def redeem_by_email(email: str, discord_id: str) -> Optional[Dict]:
         )
 
         return dict(row)
+
+
+async def cleanup_duplicate_licenses() -> Dict:
+    """
+    Find and delete duplicate licenses, keeping only the one with the most days remaining.
+    Returns stats about what was cleaned up.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        now = datetime.utcnow()
+
+        # Find all duplicates: users with more than 1 active license for the same product
+        duplicates = await conn.fetch("""
+            SELECT discord_id, product, COUNT(*) as count
+            FROM licenses
+            WHERE revoked = 0
+            GROUP BY discord_id, product
+            HAVING COUNT(*) > 1
+        """)
+
+        total_deleted = 0
+        affected_users = []
+
+        for dup in duplicates:
+            discord_id = dup["discord_id"]
+            product = dup["product"]
+
+            # Get all licenses for this user+product, ordered by expiry (best first)
+            licenses = await conn.fetch("""
+                SELECT license_key, expires_at, discord_name
+                FROM licenses
+                WHERE discord_id = $1 AND product = $2 AND revoked = 0
+                ORDER BY expires_at DESC
+            """, discord_id, product)
+
+            if len(licenses) <= 1:
+                continue
+
+            # Keep the first one (highest expiry), delete the rest
+            to_keep = licenses[0]
+            to_delete = licenses[1:]
+
+            for lic in to_delete:
+                await conn.execute(
+                    "DELETE FROM licenses WHERE license_key = $1",
+                    lic["license_key"]
+                )
+                total_deleted += 1
+
+            affected_users.append({
+                "discord_id": discord_id,
+                "discord_name": to_keep["discord_name"],
+                "product": product,
+                "kept_expiry": to_keep["expires_at"],
+                "deleted_count": len(to_delete)
+            })
+
+        return {
+            "total_deleted": total_deleted,
+            "affected_users": affected_users
+        }

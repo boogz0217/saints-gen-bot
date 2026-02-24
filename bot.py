@@ -25,7 +25,8 @@ from database import (
     get_referral_count_received, get_referral_count_given, has_been_referred_by,
     add_referral, get_referral_stats, extend_user_license_for_product,
     get_pending_order_by_email, claim_pending_order, init_linked_accounts_table,
-    init_purchases_table, redeem_by_email, get_all_licenses_for_user
+    init_purchases_table, redeem_by_email, get_all_licenses_for_user,
+    cleanup_duplicate_licenses
 )
 from license_crypto import generate_license_key, get_key_info
 
@@ -865,6 +866,59 @@ async def pending_orders(interaction: discord.Interaction):
 
     embed.set_footer(text="Pending notifications retry automatically every 10 seconds")
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="cleanup-duplicates", description="[Admin] Remove duplicate licenses, keeping the one with most days")
+@is_admin()
+async def cleanup_duplicates(interaction: discord.Interaction):
+    """Find and delete duplicate licenses, keeping only the one with the most days remaining."""
+    await interaction.response.defer(ephemeral=True)
+
+    result = await cleanup_duplicate_licenses()
+
+    if result["total_deleted"] == 0:
+        embed = discord.Embed(
+            title="No Duplicates Found",
+            description="All users have only one license per product.",
+            color=discord.Color.green()
+        )
+        await interaction.followup.send(embed=embed)
+        return
+
+    embed = discord.Embed(
+        title="Duplicate Cleanup Complete",
+        description=f"Deleted **{result['total_deleted']}** duplicate license(s)",
+        color=discord.Color.green()
+    )
+
+    # Show affected users (up to 10)
+    for i, user_info in enumerate(result["affected_users"][:10]):
+        expires = user_info["kept_expiry"]
+        if isinstance(expires, str):
+            expires = datetime.fromisoformat(expires)
+
+        embed.add_field(
+            name=f"{user_info['discord_name']} - {user_info['product']}",
+            value=f"Deleted: {user_info['deleted_count']} | Kept expiry: {expires.strftime('%Y-%m-%d')}",
+            inline=False
+        )
+
+    if len(result["affected_users"]) > 10:
+        embed.set_footer(text=f"... and {len(result['affected_users']) - 10} more users")
+
+    await interaction.followup.send(embed=embed)
+
+    # Audit log
+    await send_audit_log(
+        title="Duplicate Licenses Cleaned",
+        description=f"Removed {result['total_deleted']} duplicate licenses",
+        admin=interaction.user,
+        color=discord.Color.orange(),
+        fields=[
+            {"name": "Users Affected", "value": str(len(result["affected_users"])), "inline": True},
+            {"name": "Licenses Deleted", "value": str(result["total_deleted"]), "inline": True}
+        ]
+    )
 
 
 # ==================== USER COMMANDS ====================
