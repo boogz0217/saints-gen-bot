@@ -351,11 +351,11 @@ PRODUCT_CHOICES = [
 async def generate(interaction: discord.Interaction, user: discord.User, days: int, product: str = "saints-gen"):
     """Give a user access to a product (they login with their Discord ID)."""
     if days < 1:
-        await interaction.response.send_message("Days must be at least 1.", ephemeral=True)
+        await interaction.response.send_message("Days must be at least 1.")
         return
 
     if days > 36500:  # 100 years max
-        await interaction.response.send_message("Maximum is 36500 days (100 years).", ephemeral=True)
+        await interaction.response.send_message("Maximum is 36500 days (100 years).")
         return
 
     # Generate internal key (user never sees this)
@@ -372,9 +372,7 @@ async def generate(interaction: discord.Interaction, user: discord.User, days: i
 
     if not success:
         await interaction.response.send_message(
-            "Failed to create subscription. Try again.",
-            ephemeral=True
-        )
+            "Failed to create subscription. Try again."        )
         return
 
     # Give appropriate role based on product
@@ -408,7 +406,7 @@ async def generate(interaction: discord.Interaction, user: discord.User, days: i
     if role_added:
         embed.add_field(name="Role", value="Added", inline=True)
 
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=embed)
 
     # DM the user (no key, just tell them to use Discord ID)
     try:
@@ -443,29 +441,21 @@ async def revoke(
     """Revoke a license key or all keys for a user."""
     if not key and not user:
         await interaction.response.send_message(
-            "Please provide either a license key or a user.",
-            ephemeral=True
-        )
+            "Please provide either a license key or a user."        )
         return
 
     if key:
         success = await revoke_license(key)
         if success:
             await interaction.response.send_message(
-                f"License `{key[:20]}...` has been revoked.",
-                ephemeral=True
-            )
+                f"License `{key[:20]}...` has been revoked."            )
         else:
             await interaction.response.send_message(
-                "License not found.",
-                ephemeral=True
-            )
+                "License not found."            )
     else:
         count = await revoke_user_licenses(str(user.id))
         await interaction.response.send_message(
-            f"Revoked {count} license(s) for {user.mention}.",
-            ephemeral=True
-        )
+            f"Revoked {count} license(s) for {user.mention}."        )
 
 
 @bot.tree.command(name="delete", description="Permanently delete a license by key or user")
@@ -482,29 +472,21 @@ async def delete(
     """Permanently delete a license key or all keys for a user."""
     if not key and not user:
         await interaction.response.send_message(
-            "Please provide either a license key or a user.",
-            ephemeral=True
-        )
+            "Please provide either a license key or a user."        )
         return
 
     if key:
         success = await delete_license(key)
         if success:
             await interaction.response.send_message(
-                f"License `{key[:20]}...` has been **permanently deleted**.",
-                ephemeral=True
-            )
+                f"License `{key[:20]}...` has been **permanently deleted**."            )
         else:
             await interaction.response.send_message(
-                "License not found.",
-                ephemeral=True
-            )
+                "License not found."            )
     else:
         count = await delete_user_licenses(str(user.id))
         await interaction.response.send_message(
-            f"**Permanently deleted** {count} license(s) for {user.mention}.",
-            ephemeral=True
-        )
+            f"**Permanently deleted** {count} license(s) for {user.mention}."        )
 
 
 @bot.tree.command(name="extend", description="Add or remove days from a license (use negative to remove)")
@@ -526,16 +508,12 @@ async def extend(
     """Add or remove days from a license. Use negative days to reduce."""
     if not key and not user:
         await interaction.response.send_message(
-            "Please provide either a license key or a user.",
-            ephemeral=True
-        )
+            "Please provide either a license key or a user."        )
         return
 
     if days == 0:
         await interaction.response.send_message(
-            "Days cannot be 0.",
-            ephemeral=True
-        )
+            "Days cannot be 0."        )
         return
 
     # Determine action word based on positive/negative
@@ -547,21 +525,15 @@ async def extend(
         if new_expiry:
             expiry_dt = datetime.fromisoformat(new_expiry)
             await interaction.response.send_message(
-                f"License {action} by **{days_display} days**.\nNew expiry: **{expiry_dt.strftime('%Y-%m-%d %H:%M UTC')}**",
-                ephemeral=True
-            )
+                f"License {action} by **{days_display} days**.\nNew expiry: **{expiry_dt.strftime('%Y-%m-%d %H:%M UTC')}**"            )
         else:
             await interaction.response.send_message(
-                "License not found.",
-                ephemeral=True
-            )
+                "License not found."            )
     else:
         # When using user, product is required
         if not product:
             await interaction.response.send_message(
-                "Please select a product when modifying by user.",
-                ephemeral=True
-            )
+                "Please select a product when modifying by user."            )
             return
 
         new_expiry = await extend_user_license_for_product(str(user.id), days, product)
@@ -569,14 +541,10 @@ async def extend(
         if new_expiry:
             expiry_dt = datetime.fromisoformat(new_expiry)
             await interaction.response.send_message(
-                f"{action.capitalize()} {user.mention}'s **{product_name}** license by **{days_display} days**.\nNew expiry: **{expiry_dt.strftime('%Y-%m-%d %H:%M UTC')}**",
-                ephemeral=True
-            )
+                f"{action.capitalize()} {user.mention}'s **{product_name}** license by **{days_display} days**.\nNew expiry: **{expiry_dt.strftime('%Y-%m-%d %H:%M UTC')}**"            )
         else:
             await interaction.response.send_message(
-                f"{user.mention} has no **{product_name}** license to modify.",
-                ephemeral=True
-            )
+                f"{user.mention} has no **{product_name}** license to modify."            )
 
 
 @bot.tree.command(name="list", description="List all active licenses")
@@ -588,7 +556,7 @@ async def list_licenses(interaction: discord.Interaction, product: str = None):
     licenses = await get_all_active_licenses(product)
 
     if not licenses:
-        await interaction.response.send_message("No active licenses.", ephemeral=True)
+        await interaction.response.send_message("No active licenses.")
         return
 
     title = "Active Licenses"
@@ -624,7 +592,7 @@ async def list_licenses(interaction: discord.Interaction, product: str = None):
     stats = await get_license_stats(product)
     embed.description = f"**Stats:** {stats['active']} active, {stats['expired']} expired, {stats['revoked']} revoked"
 
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=embed)
 
 
 @bot.tree.command(name="check", description="Check a license key's validity")
@@ -672,7 +640,7 @@ async def check(interaction: discord.Interaction, key: str):
     if info["error"]:
         embed.add_field(name="Error", value=info["error"], inline=False)
 
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=embed)
 
 
 @bot.tree.command(name="reset-hwid", description="Reset hardware binding for a license (allows activation on new PC)")
@@ -689,9 +657,7 @@ async def reset_hwid(
     """Reset hardware ID binding so the license can be activated on a new machine."""
     if not key and not user:
         await interaction.response.send_message(
-            "Please provide either a license key or a user.",
-            ephemeral=True
-        )
+            "Please provide either a license key or a user."        )
         return
 
     if key:
@@ -699,9 +665,7 @@ async def reset_hwid(
         current_hwid = await get_hwid_by_key(key)
         if not current_hwid:
             await interaction.response.send_message(
-                "This license is not bound to any hardware yet.",
-                ephemeral=True
-            )
+                "This license is not bound to any hardware yet."            )
             return
 
         success = await reset_hwid_by_key(key)
@@ -709,27 +673,19 @@ async def reset_hwid(
             await interaction.response.send_message(
                 f"Hardware binding reset for license `{key[:20]}...`\n"
                 f"Previous HWID: `{current_hwid[:12]}...`\n"
-                f"The user can now activate on a new PC.",
-                ephemeral=True
-            )
+                f"The user can now activate on a new PC."            )
         else:
             await interaction.response.send_message(
-                "License not found.",
-                ephemeral=True
-            )
+                "License not found."            )
     else:
         count = await reset_hwid_by_user(str(user.id))
         if count > 0:
             await interaction.response.send_message(
                 f"Reset hardware binding for {count} license(s) for {user.mention}.\n"
-                f"They can now activate on a new PC.",
-                ephemeral=True
-            )
+                f"They can now activate on a new PC."            )
         else:
             await interaction.response.send_message(
-                f"{user.mention} has no licenses to reset.",
-                ephemeral=True
-            )
+                f"{user.mention} has no licenses to reset."            )
 
 
 @bot.tree.command(name="pending-orders", description="View pending/failed Shopify order notifications")
@@ -766,7 +722,7 @@ async def pending_orders(interaction: discord.Interaction):
         embed.add_field(name="Failed", value="No failed notifications", inline=False)
 
     embed.set_footer(text="Pending notifications retry automatically every 10 seconds")
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=embed)
 
 
 # ==================== USER COMMANDS ====================
@@ -794,7 +750,7 @@ async def get_id(interaction: discord.Interaction):
     embed.set_thumbnail(url=user.display_avatar.url)
     embed.set_footer(text="Your license key will be sent to you via DM after purchase!")
 
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=embed)
 
 
 @bot.tree.command(name="status", description="Check your subscription status")
@@ -835,14 +791,14 @@ async def status(interaction: discord.Interaction, product: str = None):
             embed.add_field(name="Expires", value=expires.strftime("%Y-%m-%d"), inline=True)
             embed.add_field(name="Days Left", value=str(days_left), inline=True)
 
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=embed)
 
 
 @bot.tree.command(name="link", description="Link your Shopify purchase to your Discord account")
 @app_commands.describe(email="The email you used for your Shopify purchase")
 async def link_purchase(interaction: discord.Interaction, email: str):
     """Link a Shopify purchase to claim your license."""
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer()
 
     email = email.lower().strip()
     discord_id = str(interaction.user.id)
@@ -863,7 +819,7 @@ async def link_purchase(interaction: discord.Interaction, email: str):
             value="If you've already linked your order, use `/status` to check your subscription.",
             inline=False
         )
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed)
         return
 
     product = pending["product"]
@@ -914,7 +870,7 @@ async def link_purchase(interaction: discord.Interaction, email: str):
     )
     embed.set_footer(text="Thank you for your purchase!")
 
-    await interaction.followup.send(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed)
 
     # Also try to DM them
     try:
@@ -999,7 +955,7 @@ async def balance(interaction: discord.Interaction, product: str = None):
 @app_commands.describe(email="The email you used for your Shopify purchase")
 async def redeem(interaction: discord.Interaction, email: str):
     """Redeem a purchase using your email to get your license and role."""
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer()
 
     # Try to redeem by email
     purchase = await redeem_by_email(email.strip(), str(interaction.user.id))
@@ -1012,7 +968,7 @@ async def redeem(interaction: discord.Interaction, email: str):
                         "If you already redeemed, use `/status` to check your license.",
             color=discord.Color.red()
         )
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed)
         return
 
     # Purchase found - check if user already has a license for this product
@@ -1037,7 +993,7 @@ async def redeem(interaction: discord.Interaction, email: str):
                 description="Failed to extend license. Please contact support.",
                 color=discord.Color.red()
             )
-            await interaction.followup.send(embed=embed, ephemeral=True)
+            await interaction.followup.send(embed=embed)
             return
     else:
         # No existing license - create new one
@@ -1066,7 +1022,7 @@ async def redeem(interaction: discord.Interaction, email: str):
                 description="Failed to create license. Please contact support.",
                 color=discord.Color.red()
             )
-            await interaction.followup.send(embed=embed, ephemeral=True)
+            await interaction.followup.send(embed=embed)
             return
 
     # Assign role
@@ -1123,7 +1079,7 @@ async def redeem(interaction: discord.Interaction, email: str):
         inline=False
     )
 
-    await interaction.followup.send(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed)
 
     # Also DM the user their license info
     try:
@@ -1200,36 +1156,28 @@ async def referral(interaction: discord.Interaction, referrer: discord.User, ref
     # Can't refer yourself
     if referrer.id == referred.id:
         await interaction.response.send_message(
-            "A user cannot refer themselves!",
-            ephemeral=True
-        )
+            "A user cannot refer themselves!"        )
         return
 
     # Check if referred user has an active Saint's Shot license
     has_license = await has_active_license_for_product(str(referred.id), product)
     if not has_license:
         await interaction.response.send_message(
-            f"{referred.mention} needs an active **{product_name}** license to receive referral bonus.",
-            ephemeral=True
-        )
+            f"{referred.mention} needs an active **{product_name}** license to receive referral bonus."        )
         return
 
     # Check if already referred by this person
     already_referred = await has_been_referred_by(str(referred.id), str(referrer.id), product)
     if already_referred:
         await interaction.response.send_message(
-            f"{referred.mention} has already been referred by {referrer.mention}!",
-            ephemeral=True
-        )
+            f"{referred.mention} has already been referred by {referrer.mention}!"        )
         return
 
     # Check how many times the referred user has been referred (cap at 5)
     times_referred = await get_referral_count_received(str(referred.id), product)
     if times_referred >= MAX_REFERRALS:
         await interaction.response.send_message(
-            f"{referred.mention} has reached the maximum of **{MAX_REFERRALS}** referrals.",
-            ephemeral=True
-        )
+            f"{referred.mention} has reached the maximum of **{MAX_REFERRALS}** referrals."        )
         return
 
     # Calculate days to award based on referral number
@@ -1240,18 +1188,14 @@ async def referral(interaction: discord.Interaction, referrer: discord.User, ref
     new_expiry = await extend_user_license_for_product(str(referred.id), days_awarded, product)
     if not new_expiry:
         await interaction.response.send_message(
-            f"Could not extend {referred.mention}'s license.",
-            ephemeral=True
-        )
+            f"Could not extend {referred.mention}'s license."        )
         return
 
     # Record the referral (this tracks both users)
     success = await add_referral(str(referrer.id), str(referred.id), days_awarded, product)
     if not success:
         await interaction.response.send_message(
-            f"Failed to record referral.",
-            ephemeral=True
-        )
+            f"Failed to record referral."        )
         return
 
     # Get stats for both users
@@ -1281,7 +1225,7 @@ async def referral(interaction: discord.Interaction, referrer: discord.User, ref
         inline=True
     )
 
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=embed)
 
     # Try to notify both users
     try:
@@ -1343,7 +1287,7 @@ async def referral_stats(interaction: discord.Interaction):
         )
 
     embed.set_thumbnail(url=user.display_avatar.url)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=embed)
 
 
 # ==================== EXCHANGE SYSTEM ====================
@@ -1567,14 +1511,10 @@ async def exchange(interaction: discord.Interaction, days: int):
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.CheckFailure):
         await interaction.response.send_message(
-            "You don't have permission to use this command.",
-            ephemeral=True
-        )
+            "You don't have permission to use this command."        )
     else:
         await interaction.response.send_message(
-            f"An error occurred: {str(error)}",
-            ephemeral=True
-        )
+            f"An error occurred: {str(error)}"        )
         raise error
 
 
