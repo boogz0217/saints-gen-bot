@@ -1,6 +1,20 @@
 # SAINT's Gen/Shot License System - Claude Notes
 
-## Railway URL
+## Deployment (DigitalOcean App Platform)
+**URL:** `https://saints-gen-bot-ohez9.ondigitalocean.app`
+
+**To deploy updates:**
+```bash
+cd "C:\Users\seven\Desktop\New folder\BEST WORKING VERSION\discord_bot"
+git add <files>
+git commit -m "message"
+git push
+```
+Auto-deploys from GitHub - changes go live within 1-2 minutes.
+
+**GitHub Repo:** `https://github.com/boogz0217/saints-gen-bot.git`
+
+## Old Railway URL (deprecated)
 `worker-production-767a.up.railway.app`
 
 ## Products & Roles
