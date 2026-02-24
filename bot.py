@@ -1606,6 +1606,8 @@ async def exchange(interaction: discord.Interaction, days: int):
     if role_changes:
         embed.add_field(name="Roles", value=", ".join(role_changes), inline=False)
 
+    embed.add_field(name="Next Steps", value="Head to <#1475702262729936979> to get started with SaintX!", inline=False)
+
     embed.set_thumbnail(url=user.display_avatar.url)
     await interaction.followup.send(embed=embed)
 
@@ -1623,6 +1625,11 @@ async def exchange(interaction: discord.Interaction, days: int):
         dm_embed.add_field(
             name="How to Activate",
             value="1. Open SaintX\n2. Enter your Discord ID\n3. Click Activate",
+            inline=False
+        )
+        dm_embed.add_field(
+            name="Get Started",
+            value="Visit the SaintX channel in the server for setup instructions and support!",
             inline=False
         )
         await user.send(embed=dm_embed)
