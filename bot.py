@@ -365,16 +365,16 @@ PRODUCT_CHOICES = [
 ]
 
 
-@bot.tree.command(name="generate", description="Give a user access to a product")
+@bot.tree.command(name="generate", description="Give a user access to a product (adds to existing subscription)")
 @is_admin()
 @app_commands.describe(
     user="The Discord user to give access to",
-    days="Number of days of access",
+    days="Number of days of access (adds to existing subscription if they have one)",
     product="Which product to give access for"
 )
 @app_commands.choices(product=PRODUCT_CHOICES)
 async def generate(interaction: discord.Interaction, user: discord.User, days: int, product: str = "saints-gen"):
-    """Give a user access to a product (they login with their Discord ID)."""
+    """Give a user access to a product (adds to existing subscription if they have one)."""
     if days < 1:
         await interaction.response.send_message("Days must be at least 1.", ephemeral=True)
         return
@@ -383,22 +383,45 @@ async def generate(interaction: discord.Interaction, user: discord.User, days: i
         await interaction.response.send_message("Maximum is 36500 days (100 years).", ephemeral=True)
         return
 
-    # Generate internal key (user never sees this)
-    license_key, expires_at = generate_license_key(SECRET_KEY, str(user.id), days, user.name, "")
+    # Product display name
+    product_name = get_product_name(product)
+    discord_id = str(user.id)
 
-    # Store in database
-    success = await add_license(
-        license_key=license_key,
-        discord_id=str(user.id),
-        discord_name=str(user),
-        expires_at=expires_at,
-        product=product
-    )
+    # Check if user already has an active license for this product
+    existing_license = await get_license_by_user(discord_id, product)
+    extended = False
 
-    if not success:
-        await interaction.response.send_message(
-            "Failed to create subscription. Try again.", ephemeral=True)
-        return
+    if existing_license and not existing_license.get("revoked"):
+        # User has existing license - extend it
+        new_expiry = await extend_user_license_for_product(discord_id, days, product)
+        if new_expiry:
+            expires_at = datetime.fromisoformat(new_expiry)
+            extended = True
+        else:
+            await interaction.response.send_message(
+                f"Failed to extend {user.mention}'s existing subscription. Try again.", ephemeral=True)
+            return
+    else:
+        # No existing license - create new one
+        from datetime import timedelta
+        expires_at = datetime.utcnow() + timedelta(days=days)
+
+        # Generate internal key (user never sees this)
+        license_key, _ = generate_license_key(SECRET_KEY, discord_id, days, user.name, "")
+
+        # Store in database
+        success = await add_license(
+            license_key=license_key,
+            discord_id=discord_id,
+            discord_name=str(user),
+            expires_at=expires_at,
+            product=product
+        )
+
+        if not success:
+            await interaction.response.send_message(
+                "Failed to create subscription. Try again.", ephemeral=True)
+            return
 
     # Give appropriate role based on product
     role_added = False
@@ -415,34 +438,33 @@ async def generate(interaction: discord.Interaction, user: discord.User, days: i
         except Exception as e:
             print(f"Could not add role to {user}: {e}")
 
-    # Product display name
-    product_name = get_product_name(product)
-
     # Create embed response (no license key shown)
     embed = discord.Embed(
-        title="Subscription Added",
+        title="Subscription Extended" if extended else "Subscription Added",
         color=discord.Color.green()
     )
     embed.add_field(name="Product", value=product_name, inline=True)
     embed.add_field(name="User", value=f"{user.mention}", inline=True)
     embed.add_field(name="Discord ID", value=f"`{user.id}`", inline=False)
-    embed.add_field(name="Duration", value=f"{days} days", inline=True)
+    embed.add_field(name="Days Added", value=f"+{days} days", inline=True)
     embed.add_field(name="Expires", value=expires_at.strftime("%Y-%m-%d %H:%M UTC"), inline=True)
     if role_added:
         embed.add_field(name="Role", value="Added", inline=True)
+    if extended:
+        embed.set_footer(text="Extended existing subscription")
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # Audit log
     await send_audit_log(
-        title="License Generated",
-        description=f"Generated **{product_name}** license for {user.mention}",
+        title="License Extended" if extended else "License Generated",
+        description=f"{'Extended' if extended else 'Generated'} **{product_name}** license for {user.mention}",
         admin=interaction.user,
         color=discord.Color.green(),
         fields=[
             {"name": "User", "value": f"{user} (`{user.id}`)", "inline": True},
             {"name": "Product", "value": product_name, "inline": True},
-            {"name": "Days", "value": str(days), "inline": True},
+            {"name": "Days Added", "value": f"+{days}", "inline": True},
             {"name": "Expires", "value": expires_at.strftime("%Y-%m-%d"), "inline": True},
         ]
     )
@@ -450,12 +472,13 @@ async def generate(interaction: discord.Interaction, user: discord.User, days: i
     # DM the user (no key, just tell them to use Discord ID)
     try:
         user_embed = discord.Embed(
-            title=f"{product_name} Access Granted!",
-            description="You now have access to the product.",
+            title=f"{product_name} {'Extended' if extended else 'Access Granted'}!",
+            description=f"{'Your subscription has been extended!' if extended else 'You now have access to the product.'}",
             color=discord.Color.green()
         )
+        user_embed.add_field(name="Days Added", value=f"+{days} days", inline=True)
+        user_embed.add_field(name="Expires", value=expires_at.strftime("%Y-%m-%d %H:%M UTC"), inline=True)
         user_embed.add_field(name="Your Discord ID", value=f"```{user.id}```", inline=False)
-        user_embed.add_field(name="Expires", value=expires_at.strftime("%Y-%m-%d %H:%M UTC"), inline=False)
         user_embed.add_field(
             name="How to Activate",
             value=f"1. Open {product_name}\n2. Enter your Discord ID\n3. Click Activate",
@@ -998,13 +1021,33 @@ async def link_purchase(interaction: discord.Interaction, email: str):
     days = pending["days"]
     order_number = pending.get("order_number", "Unknown")
 
-    # Generate license for this user
     from datetime import timedelta
-    expires_at = datetime.utcnow() + timedelta(days=days)
-    license_key, _ = generate_license_key(SECRET_KEY, discord_id, days, discord_name)
 
-    # Add license to database
-    await add_license(license_key, discord_id, discord_name, expires_at, product)
+    # Check if user already has a license for this product - extend it if so
+    existing_license = await get_license_by_user(discord_id, product)
+    extended = False
+
+    if existing_license and not existing_license.get("revoked"):
+        # Extend existing license
+        new_expiry = await extend_user_license_for_product(discord_id, days, product)
+        if new_expiry:
+            expires_at = datetime.fromisoformat(new_expiry)
+            extended = True
+        else:
+            embed = discord.Embed(
+                title="Error",
+                description="Failed to extend license. Please contact support.",
+                color=discord.Color.red()
+            )
+            await interaction.followup.send(embed=embed)
+            return
+    else:
+        # Create new license
+        expires_at = datetime.utcnow() + timedelta(days=days)
+        license_key, _ = generate_license_key(SECRET_KEY, discord_id, days, discord_name)
+
+        # Add license to database
+        await add_license(license_key, discord_id, discord_name, expires_at, product)
 
     # Mark pending order as claimed
     await claim_pending_order(pending["id"], discord_id)
@@ -1025,15 +1068,15 @@ async def link_purchase(interaction: discord.Interaction, email: str):
         print(f"Error assigning role: {e}")
 
     # Get product name
-    prod_name = "Saint's Gen" if product == "saints-gen" else "Saint's Shot"
+    prod_name = get_product_name(product)
 
     embed = discord.Embed(
-        title="Purchase Linked Successfully!",
-        description=f"Your **{prod_name}** license has been activated!",
+        title="License Extended!" if extended else "Purchase Linked Successfully!",
+        description=f"Your **{prod_name}** license has been {'extended' if extended else 'activated'}!",
         color=discord.Color.green()
     )
     embed.add_field(name="Order", value=f"#{order_number}", inline=True)
-    embed.add_field(name="Duration", value=f"{days} days", inline=True)
+    embed.add_field(name="Days Added", value=f"+{days} days", inline=True)
     embed.add_field(name="Expires", value=expires_at.strftime("%Y-%m-%d"), inline=True)
     embed.add_field(
         name="How to Use",
@@ -1047,11 +1090,12 @@ async def link_purchase(interaction: discord.Interaction, email: str):
     # Also try to DM them
     try:
         dm_embed = discord.Embed(
-            title=f"{prod_name} License Activated!",
-            description="Your purchase has been linked to your Discord account.",
+            title=f"{prod_name} License {'Extended' if extended else 'Activated'}!",
+            description=f"Your {'subscription has been extended' if extended else 'purchase has been linked to your Discord account'}.",
             color=discord.Color.green()
         )
         dm_embed.add_field(name="Order", value=f"#{order_number}", inline=True)
+        dm_embed.add_field(name="Days Added", value=f"+{days} days", inline=True)
         dm_embed.add_field(name="Expires", value=expires_at.strftime("%Y-%m-%d"), inline=True)
         dm_embed.add_field(
             name="Login",
