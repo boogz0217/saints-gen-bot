@@ -12,7 +12,7 @@ from typing import Optional
 
 import aiohttp
 
-from config import DISCORD_TOKEN, ADMIN_IDS, SECRET_KEY, GUILD_ID, SUBSCRIBER_ROLE_ID, SAINTS_SHOT_ROLE_ID, STORE_URL
+from config import DISCORD_TOKEN, ADMIN_IDS, SECRET_KEY, GUILD_ID, SUBSCRIBER_ROLE_ID, SAINTS_SHOT_ROLE_ID, SAINTX_ROLE_ID, STORE_URL
 from database import (
     init_db, add_license, get_license_by_key, get_license_by_user,
     revoke_license, revoke_user_licenses, delete_license, delete_user_licenses,
@@ -60,6 +60,7 @@ class LicenseBot(commands.Bot):
         print(f"Guild ID: {GUILD_ID}")
         print(f"Subscriber Role ID: {SUBSCRIBER_ROLE_ID}")
         print(f"Saint's Shot Role ID: {SAINTS_SHOT_ROLE_ID}")
+        print(f"SaintX Role ID: {SAINTX_ROLE_ID}")
         print("------")
 
     async def close(self):
@@ -89,8 +90,8 @@ class LicenseBot(commands.Bot):
                 product = lic.get("product", "saints-gen")
 
                 # Determine which role to check based on product
-                role_id = SAINTS_SHOT_ROLE_ID if product == "saints-shot" else SUBSCRIBER_ROLE_ID
-                product_name = "Saint's Shot" if product == "saints-shot" else "Saint's Gen"
+                role_id = get_role_id_for_product(product)
+                product_name = get_product_name(product)
 
                 if not role_id:
                     # Mark as notified and skip if role not configured
@@ -171,7 +172,7 @@ class LicenseBot(commands.Bot):
                 customer_name = notif.get("customer_name", "Customer")
                 order_number = notif.get("order_number", "Unknown")
 
-                product_name = "Saint's Gen" if product == "saints-gen" else "Saint's Shot"
+                product_name = get_product_name(product)
                 print(f"[NOTIF] Processing order #{order_number}: discord_id={discord_id}, product={product}")
 
                 # Try to find the user and assign role
@@ -197,7 +198,7 @@ class LicenseBot(commands.Bot):
 
                 # Assign role if we have guild configured
                 if user and GUILD_ID:
-                    role_id = SAINTS_SHOT_ROLE_ID if product == "saints-shot" else SUBSCRIBER_ROLE_ID
+                    role_id = get_role_id_for_product(product)
                     print(f"[NOTIF] Attempting role assignment: GUILD_ID={GUILD_ID}, role_id={role_id}")
                     if role_id:
                         try:
@@ -306,6 +307,28 @@ def is_admin():
     return app_commands.check(predicate)
 
 
+# ==================== HELPER FUNCTIONS ====================
+
+def get_role_id_for_product(product: str) -> int:
+    """Get the role ID for a given product."""
+    if product == "saints-shot":
+        return SAINTS_SHOT_ROLE_ID
+    elif product == "saintx":
+        return SAINTX_ROLE_ID
+    else:  # saints-gen or default
+        return SUBSCRIBER_ROLE_ID
+
+
+def get_product_name(product: str) -> str:
+    """Get display name for a product."""
+    names = {
+        "saints-gen": "Saint's Gen",
+        "saints-shot": "Saint's Shot",
+        "saintx": "SaintX"
+    }
+    return names.get(product, product)
+
+
 # ==================== ADMIN COMMANDS ====================
 
 # Product choices for the generate command
@@ -355,7 +378,7 @@ async def generate(interaction: discord.Interaction, user: discord.User, days: i
 
     # Give appropriate role based on product
     role_added = False
-    role_id = SAINTS_SHOT_ROLE_ID if product == "saints-shot" else SUBSCRIBER_ROLE_ID
+    role_id = get_role_id_for_product(product)
     if GUILD_ID and role_id:
         try:
             guild = bot.get_guild(GUILD_ID)
@@ -369,7 +392,7 @@ async def generate(interaction: discord.Interaction, user: discord.User, days: i
             print(f"Could not add role to {user}: {e}")
 
     # Product display name
-    product_name = "Saint's Gen" if product == "saints-gen" else "Saint's Shot"
+    product_name = get_product_name(product)
 
     # Create embed response (no license key shown)
     embed = discord.Embed(
@@ -541,7 +564,7 @@ async def extend(
             return
 
         new_expiry = await extend_user_license_for_product(str(user.id), days, product)
-        product_name = "Saint's Gen" if product == "saints-gen" else "Saint's Shot"
+        product_name = get_product_name(product)
         if new_expiry:
             expiry_dt = datetime.fromisoformat(new_expiry)
             await interaction.response.send_message(
@@ -569,7 +592,7 @@ async def list_licenses(interaction: discord.Interaction, product: str = None):
 
     title = "Active Licenses"
     if product:
-        product_name = "Saint's Gen" if product == "saints-gen" else "Saint's Shot"
+        product_name = get_product_name(product)
         title = f"Active {product_name} Licenses"
 
     embed = discord.Embed(
@@ -863,7 +886,7 @@ async def link_purchase(interaction: discord.Interaction, email: str):
         if guild:
             member = guild.get_member(interaction.user.id) or await guild.fetch_member(interaction.user.id)
             if member:
-                role_id = SUBSCRIBER_ROLE_ID if product == "saints-gen" else SAINTS_SHOT_ROLE_ID
+                role_id = get_role_id_for_product(product)
                 if role_id:
                     role = guild.get_role(role_id)
                     if role:
@@ -1054,7 +1077,7 @@ async def redeem(interaction: discord.Interaction, email: str):
             if guild:
                 member = guild.get_member(interaction.user.id)
                 if member:
-                    role_id = SAINTS_SHOT_ROLE_ID if product == "saints-shot" else SUBSCRIBER_ROLE_ID
+                    role_id = get_role_id_for_product(product)
                     if role_id:
                         role = guild.get_role(role_id)
                         if role:
@@ -1065,7 +1088,7 @@ async def redeem(interaction: discord.Interaction, email: str):
             print(f"Error assigning role: {e}")
 
     # Product name for display
-    product_name = "Saint's Gen" if product == "saints-gen" else "Saint's Shot"
+    product_name = get_product_name(product)
 
     # Send success embed
     if extended:

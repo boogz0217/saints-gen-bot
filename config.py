@@ -31,6 +31,9 @@ SUBSCRIBER_ROLE_ID = int(os.getenv("SUBSCRIBER_ROLE_ID", "0"))
 # Role to give to Saint's Shot subscribers
 SAINTS_SHOT_ROLE_ID = int(os.getenv("SAINTS_SHOT_ROLE_ID", "0"))
 
+# Role to give to SaintX subscribers
+SAINTX_ROLE_ID = int(os.getenv("SAINTX_ROLE_ID", "1475610259208016197"))
+
 # Store URL for renewal
 STORE_URL = os.getenv("STORE_URL", "https://saintservice.store/")
 
