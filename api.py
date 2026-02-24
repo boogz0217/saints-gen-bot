@@ -79,6 +79,11 @@ PRODUCT_VERSIONS = {
         "current": "2.1.0",
         "min": "2.1.0",
         "message": "Please download the latest version from the Discord server."
+    },
+    "saintx": {
+        "current": "1.0.0",
+        "min": "1.0.0",
+        "message": "Please download the latest version from the Discord server."
     }
 }
 
@@ -298,7 +303,7 @@ async def auth_discord(request: DiscordAuthRequest):
         raise HTTPException(status_code=400, detail="Invalid Discord ID format")
 
     # Require product parameter - blocks old clients that don't send it
-    valid_products = ["saints-gen", "saints-shot"]
+    valid_products = ["saints-gen", "saints-shot", "saintx"]
     if not requested_product:
         return {
             "success": False,
