@@ -339,7 +339,12 @@ async def auth_discord(request: DiscordAuthRequest):
 
             if not row:
                 if requested_product:
-                    product_name = "Saint's Gen" if requested_product == "saints-gen" else "Saint's Shot"
+                    product_names = {
+                        "saints-gen": "Saint's Gen",
+                        "saints-shot": "Saint's Shot",
+                        "saintx": "SaintX"
+                    }
+                    product_name = product_names.get(requested_product, requested_product)
                     return {
                         "success": False,
                         "error": f"No active {product_name} subscription found for this Discord ID"
