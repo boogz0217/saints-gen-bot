@@ -1420,7 +1420,7 @@ async def referral_stats(interaction: discord.Interaction):
 # ==================== EXCHANGE SYSTEM ====================
 
 @bot.tree.command(name="exchange", description="Exchange Saint's Shot days for SaintX days")
-@app_commands.describe(days="Number of Saint's Shot days to exchange (you get 2/3 as SaintX days, rounded up)")
+@app_commands.describe(days="Number of Saint's Shot days to exchange (minimum 7, you get 2/3 as SaintX days, rounded up)")
 async def exchange(interaction: discord.Interaction, days: int):
     """Exchange Saint's Shot subscription days for SaintX days (2/3 ratio, rounded up)."""
     await interaction.response.defer()  # Public response
@@ -1428,10 +1428,10 @@ async def exchange(interaction: discord.Interaction, days: int):
     user = interaction.user
     discord_id = str(user.id)
 
-    if days < 1:
+    if days < 7:
         embed = discord.Embed(
             title="Invalid Amount",
-            description=f"{user.mention} - Days must be at least 1.",
+            description=f"{user.mention} - You must exchange at least **7 days** from Saint's Shot.",
             color=discord.Color.red()
         )
         await interaction.followup.send(embed=embed)
