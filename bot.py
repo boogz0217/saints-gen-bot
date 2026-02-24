@@ -595,50 +595,93 @@ async def list_licenses(interaction: discord.Interaction, product: str = None):
     await interaction.response.send_message(embed=embed)
 
 
-@bot.tree.command(name="check", description="Check a license key's validity")
+@bot.tree.command(name="check", description="[Admin] Check a user's subscription status")
 @is_admin()
-@app_commands.describe(key="The license key to check")
-async def check(interaction: discord.Interaction, key: str):
-    """Check if a license key is valid."""
-    info = get_key_info(SECRET_KEY, key)
-    db_info = await get_license_by_key(key)
+@app_commands.describe(user="The Discord user to check")
+async def check(interaction: discord.Interaction, user: discord.User):
+    """Check a user's subscription status (admin only)."""
+    discord_id = str(user.id)
+    now = datetime.utcnow()
 
+    # Get all licenses for user
+    all_licenses = await get_all_licenses_for_user(discord_id)
+
+    # Build embed
     embed = discord.Embed(
-        title="License Check",
-        color=discord.Color.green() if info["valid"] else discord.Color.red()
+        title="User License Check",
+        color=discord.Color.blue()
     )
+    embed.set_author(name=f"{user.display_name} ({user.id})", icon_url=user.display_avatar.url)
+    embed.set_thumbnail(url=user.display_avatar.url)
 
-    embed.add_field(name="Key Valid", value="Yes" if info["valid"] else "No", inline=True)
+    if not all_licenses:
+        embed.description = f"{user.mention} has no licenses (past or present)."
+        await interaction.response.send_message(embed=embed)
+        return
 
-    if info["discord_id"]:
-        embed.add_field(name="Discord ID", value=info["discord_id"], inline=True)
+    # Group licenses by product
+    products = ["saints-gen", "saints-shot", "saintx"]
 
-    if info["expires_at"]:
-        embed.add_field(
-            name="Expires",
-            value=info["expires_at"].strftime("%Y-%m-%d %H:%M UTC"),
-            inline=True
-        )
-        embed.add_field(name="Expired", value="Yes" if info["expired"] else "No", inline=True)
+    for prod in products:
+        prod_name = get_product_name(prod)
+        prod_licenses = [
+            lic for lic in all_licenses
+            if lic.get("product") == prod
+        ]
 
-    if db_info:
-        embed.add_field(name="In Database", value="Yes", inline=True)
-        # Show product
-        prod = db_info.get("product", "saints-gen")
-        prod_name = "Saint's Gen" if prod == "saints-gen" else "Saint's Shot"
-        embed.add_field(name="Product", value=prod_name, inline=True)
-        embed.add_field(name="Revoked", value="Yes" if db_info["revoked"] else "No", inline=True)
-        # Show hardware binding status
-        hwid = db_info.get("hwid")
-        if hwid:
-            embed.add_field(name="Hardware Bound", value=f"Yes (`{hwid[:8]}...`)", inline=True)
+        if not prod_licenses:
+            embed.add_field(
+                name=f"⚫ {prod_name}",
+                value="No license history",
+                inline=False
+            )
+            continue
+
+        # Find the best active license
+        active_licenses = [
+            lic for lic in prod_licenses
+            if not lic.get("revoked")
+        ]
+
+        if active_licenses:
+            best = max(active_licenses, key=lambda x: x["expires_at"] if isinstance(x["expires_at"], datetime) else datetime.fromisoformat(str(x["expires_at"])))
+            expires = best["expires_at"]
+            if isinstance(expires, str):
+                expires = datetime.fromisoformat(expires)
+
+            hwid = best.get("hwid")
+            hwid_status = f"`{hwid[:12]}...`" if hwid else "Not bound"
+
+            if expires > now:
+                days_left = (expires - now).days
+                if days_left > 30:
+                    status_emoji = "🟢"
+                elif days_left > 7:
+                    status_emoji = "🟡"
+                else:
+                    status_emoji = "🟠"
+
+                embed.add_field(
+                    name=f"{status_emoji} {prod_name}",
+                    value=f"**Status:** Active\n**Days Left:** {days_left}\n**Expires:** {expires.strftime('%b %d, %Y')}\n**HWID:** {hwid_status}",
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name=f"🔴 {prod_name}",
+                    value=f"**Status:** Expired\n**Expired:** {expires.strftime('%b %d, %Y')}\n**HWID:** {hwid_status}",
+                    inline=False
+                )
         else:
-            embed.add_field(name="Hardware Bound", value="No (not activated)", inline=True)
-    else:
-        embed.add_field(name="In Database", value="No", inline=True)
+            # All licenses revoked
+            embed.add_field(
+                name=f"⛔ {prod_name}",
+                value="**Status:** Revoked",
+                inline=False
+            )
 
-    if info["error"]:
-        embed.add_field(name="Error", value=info["error"], inline=False)
+    # Add total license count
+    embed.set_footer(text=f"Total licenses: {len(all_licenses)}")
 
     await interaction.response.send_message(embed=embed)
 
