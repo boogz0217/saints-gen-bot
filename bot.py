@@ -1069,7 +1069,7 @@ async def link_purchase(interaction: discord.Interaction, email: str):
 @app_commands.describe(email="The email you used for your Shopify purchase")
 async def redeem(interaction: discord.Interaction, email: str):
     """Redeem a purchase using your email to get your license and role."""
-    await interaction.response.defer()
+    await interaction.response.defer(ephemeral=True)
 
     # Try to redeem by email
     purchase = await redeem_by_email(email.strip(), str(interaction.user.id))
