@@ -819,9 +819,6 @@ async def status(interaction: discord.Interaction):
                     inline=True
                 )
 
-        # Add footer with user ID
-        embed.set_footer(text=f"Discord ID: {user.id}")
-
     else:
         # No active subscriptions
         embed = discord.Embed(
@@ -846,7 +843,6 @@ async def status(interaction: discord.Interaction):
             value=f"Visit {STORE_URL} to purchase a subscription!",
             inline=False
         )
-        embed.set_footer(text=f"Discord ID: {user.id}")
 
     await interaction.response.send_message(embed=embed)
 
