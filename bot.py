@@ -1348,13 +1348,23 @@ async def referral_stats(interaction: discord.Interaction):
 
 # ==================== EXCHANGE SYSTEM ====================
 
-@bot.tree.command(name="exchange", description="Exchange your Saint's Shot subscription for SaintX")
-async def exchange(interaction: discord.Interaction):
+@bot.tree.command(name="exchange", description="Exchange Saint's Shot days for SaintX days")
+@app_commands.describe(days="Number of Saint's Shot days to exchange (you get 2/3 as SaintX days, rounded up)")
+async def exchange(interaction: discord.Interaction, days: int):
     """Exchange Saint's Shot subscription days for SaintX days (2/3 ratio, rounded up)."""
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer()  # Public response
 
     user = interaction.user
     discord_id = str(user.id)
+
+    if days < 1:
+        embed = discord.Embed(
+            title="Invalid Amount",
+            description=f"{user.mention} - Days must be at least 1.",
+            color=discord.Color.red()
+        )
+        await interaction.followup.send(embed=embed)
+        return
 
     # Check if user has an active Saint's Shot license
     shot_license = await get_license_by_user(discord_id, "saints-shot")
@@ -1362,7 +1372,7 @@ async def exchange(interaction: discord.Interaction):
     if not shot_license or shot_license.get("revoked"):
         embed = discord.Embed(
             title="No Saint's Shot License",
-            description="You don't have an active Saint's Shot subscription to exchange.",
+            description=f"{user.mention} - You don't have an active Saint's Shot subscription to exchange.",
             color=discord.Color.red()
         )
         embed.add_field(
@@ -1370,7 +1380,7 @@ async def exchange(interaction: discord.Interaction):
             value="Purchase SaintX directly from the store!",
             inline=False
         )
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed)
         return
 
     # Calculate remaining days
@@ -1383,120 +1393,162 @@ async def exchange(interaction: discord.Interaction):
     if expires < now:
         embed = discord.Embed(
             title="License Expired",
-            description="Your Saint's Shot license has already expired.",
+            description=f"{user.mention} - Your Saint's Shot license has already expired.",
             color=discord.Color.red()
         )
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed)
         return
 
-    # Calculate remaining days (round up to nearest day)
+    # Calculate remaining days (round down to be fair)
     remaining_seconds = (expires - now).total_seconds()
-    shot_days = math.ceil(remaining_seconds / 86400)  # 86400 seconds in a day
+    available_days = int(remaining_seconds / 86400)  # 86400 seconds in a day
 
-    if shot_days < 1:
+    if available_days < 1:
         embed = discord.Embed(
             title="Not Enough Time",
-            description="You have less than 1 day remaining on your Saint's Shot license.",
+            description=f"{user.mention} - You have less than 1 day remaining on your Saint's Shot license.",
             color=discord.Color.red()
         )
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed)
+        return
+
+    if days > available_days:
+        embed = discord.Embed(
+            title="Not Enough Days",
+            description=f"{user.mention} - You only have **{available_days}** days available to exchange.",
+            color=discord.Color.red()
+        )
+        embed.add_field(name="Requested", value=f"{days} days", inline=True)
+        embed.add_field(name="Available", value=f"{available_days} days", inline=True)
+        await interaction.followup.send(embed=embed)
         return
 
     # Calculate SaintX days (2/3 ratio, rounded up)
-    saintx_days = math.ceil(shot_days * 2 / 3)
+    saintx_days = math.ceil(days * 2 / 3)
 
-    # Revoke the Saint's Shot license
+    # Subtract days from Saint's Shot license
     shot_key = shot_license.get("license_key")
     if shot_key:
-        await revoke_license(shot_key)
+        new_shot_expiry = await extend_license(shot_key, -days)
+        if not new_shot_expiry:
+            embed = discord.Embed(
+                title="Exchange Failed",
+                description=f"{user.mention} - Failed to update Saint's Shot license. Please contact support.",
+                color=discord.Color.red()
+            )
+            await interaction.followup.send(embed=embed)
+            return
 
-    # Generate new SaintX license
+    # Check if user already has SaintX license - extend it if so
+    existing_saintx = await get_license_by_user(discord_id, "saintx")
+
     from datetime import timedelta
-    saintx_expires = datetime.utcnow() + timedelta(days=saintx_days)
 
-    license_key, _ = generate_license_key(
-        SECRET_KEY,
-        discord_id,
-        saintx_days,
-        user.display_name
-    )
+    if existing_saintx and not existing_saintx.get("revoked"):
+        # Extend existing SaintX license
+        new_saintx_expiry = await extend_user_license_for_product(discord_id, saintx_days, "saintx")
+        if new_saintx_expiry:
+            saintx_expires = datetime.fromisoformat(new_saintx_expiry)
+            extended = True
+        else:
+            embed = discord.Embed(
+                title="Exchange Failed",
+                description=f"{user.mention} - Failed to extend SaintX license. Please contact support.",
+                color=discord.Color.red()
+            )
+            await interaction.followup.send(embed=embed)
+            return
+    else:
+        # Create new SaintX license
+        extended = False
+        saintx_expires = datetime.utcnow() + timedelta(days=saintx_days)
 
-    # Add SaintX license to database
-    success = await add_license(
-        license_key=license_key,
-        discord_id=discord_id,
-        discord_name=user.display_name,
-        expires_at=saintx_expires,
-        product="saintx"
-    )
-
-    if not success:
-        # Restore the Saint's Shot license if we failed
-        # (un-revoke by extending it)
-        if shot_key:
-            await extend_license(shot_key, 0)  # This won't work for unrevoke, but at least log it
-        embed = discord.Embed(
-            title="Exchange Failed",
-            description="Failed to create SaintX license. Please contact support.",
-            color=discord.Color.red()
+        license_key, _ = generate_license_key(
+            SECRET_KEY,
+            discord_id,
+            saintx_days,
+            user.display_name
         )
-        await interaction.followup.send(embed=embed, ephemeral=True)
-        return
 
-    # Swap roles
-    role_swapped = False
+        success = await add_license(
+            license_key=license_key,
+            discord_id=discord_id,
+            discord_name=user.display_name,
+            expires_at=saintx_expires,
+            product="saintx"
+        )
+
+        if not success:
+            # Try to restore Saint's Shot days
+            if shot_key:
+                await extend_license(shot_key, days)
+            embed = discord.Embed(
+                title="Exchange Failed",
+                description=f"{user.mention} - Failed to create SaintX license. Please contact support.",
+                color=discord.Color.red()
+            )
+            await interaction.followup.send(embed=embed)
+            return
+
+    # Calculate remaining Saint's Shot days after exchange
+    remaining_shot_days = available_days - days
+
+    # Handle roles
+    role_changes = []
     if GUILD_ID:
         try:
             guild = bot.get_guild(GUILD_ID)
             if guild:
                 member = guild.get_member(user.id) or await guild.fetch_member(user.id)
                 if member:
-                    # Remove Saint's Shot role
-                    if SAINTS_SHOT_ROLE_ID:
+                    # Remove Saint's Shot role only if no days left
+                    if remaining_shot_days <= 0 and SAINTS_SHOT_ROLE_ID:
                         shot_role = guild.get_role(SAINTS_SHOT_ROLE_ID)
                         if shot_role and shot_role in member.roles:
-                            await member.remove_roles(shot_role, reason="Exchanged for SaintX")
+                            await member.remove_roles(shot_role, reason="Exchanged all days for SaintX")
+                            role_changes.append("Saint's Shot role removed")
 
                     # Add SaintX role
                     if SAINTX_ROLE_ID:
                         saintx_role = guild.get_role(SAINTX_ROLE_ID)
                         if saintx_role and saintx_role not in member.roles:
                             await member.add_roles(saintx_role, reason="Exchanged from Saint's Shot")
-                            role_swapped = True
+                            role_changes.append("SaintX role added")
         except Exception as e:
-            print(f"Error swapping roles during exchange: {e}")
+            print(f"Error updating roles during exchange: {e}")
 
-    # Success embed
+    # Success embed (public)
     embed = discord.Embed(
         title="Exchange Complete!",
-        description="Your Saint's Shot subscription has been exchanged for SaintX!",
+        description=f"{user.mention} exchanged Saint's Shot days for SaintX!",
         color=discord.Color.green()
     )
-    embed.add_field(name="Saint's Shot Days", value=f"{shot_days} days", inline=True)
-    embed.add_field(name="SaintX Days", value=f"{saintx_days} days", inline=True)
+    embed.add_field(name="Saint's Shot Used", value=f"-{days} days", inline=True)
+    embed.add_field(name="SaintX Received", value=f"+{saintx_days} days", inline=True)
     embed.add_field(name="Exchange Rate", value="2/3 (rounded up)", inline=True)
-    embed.add_field(name="SaintX Expires", value=saintx_expires.strftime("%B %d, %Y"), inline=False)
 
-    if role_swapped:
-        embed.add_field(name="Roles", value="Saint's Shot role removed, SaintX role added", inline=False)
+    if remaining_shot_days > 0:
+        embed.add_field(name="Saint's Shot Remaining", value=f"{remaining_shot_days} days", inline=True)
 
-    embed.add_field(
-        name="How to Use",
-        value="1. Open SaintX\n2. Enter your Discord ID when prompted\n3. Click Activate",
-        inline=False
-    )
+    embed.add_field(name="SaintX Expires", value=saintx_expires.strftime("%B %d, %Y"), inline=True)
 
-    await interaction.followup.send(embed=embed, ephemeral=True)
+    if role_changes:
+        embed.add_field(name="Roles", value=", ".join(role_changes), inline=False)
 
-    # DM the user
+    embed.set_thumbnail(url=user.display_avatar.url)
+    await interaction.followup.send(embed=embed)
+
+    # DM the user with activation info
     try:
         dm_embed = discord.Embed(
             title="SaintX Exchange Complete!",
-            description=f"You exchanged **{shot_days}** Saint's Shot days for **{saintx_days}** SaintX days!",
+            description=f"You exchanged **{days}** Saint's Shot days for **{saintx_days}** SaintX days!",
             color=discord.Color.green()
         )
         dm_embed.add_field(name="Your Discord ID", value=f"```{user.id}```", inline=False)
-        dm_embed.add_field(name="Expires", value=saintx_expires.strftime("%B %d, %Y"), inline=True)
+        dm_embed.add_field(name="SaintX Expires", value=saintx_expires.strftime("%B %d, %Y"), inline=True)
+        if remaining_shot_days > 0:
+            dm_embed.add_field(name="Saint's Shot Remaining", value=f"{remaining_shot_days} days", inline=True)
         dm_embed.add_field(
             name="How to Activate",
             value="1. Open SaintX\n2. Enter your Discord ID\n3. Click Activate",
@@ -1506,7 +1558,7 @@ async def exchange(interaction: discord.Interaction):
     except discord.Forbidden:
         pass  # DMs disabled
 
-    print(f"Exchange completed: {user} ({user.id}) - {shot_days} Saint's Shot days -> {saintx_days} SaintX days")
+    print(f"Exchange completed: {user} ({user.id}) - {days} Saint's Shot days -> {saintx_days} SaintX days")
 
 
 # ==================== ERROR HANDLING ====================
