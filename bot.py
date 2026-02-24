@@ -948,64 +948,6 @@ async def link_purchase(interaction: discord.Interaction, email: str):
         pass  # DMs might be disabled
 
 
-@bot.tree.command(name="balance", description="Show your subscription balance publicly")
-@app_commands.describe(product="Which product to show balance for")
-@app_commands.choices(product=PRODUCT_CHOICES)
-async def balance(interaction: discord.Interaction, product: str = None):
-    """Show subscription balance publicly."""
-    license_data = await get_license_by_user(str(interaction.user.id), product)
-
-    if not license_data:
-        embed = discord.Embed(
-            title="No Active License",
-            description=f"{interaction.user.mention} does not have an active license.",
-            color=discord.Color.red()
-        )
-        await interaction.response.send_message(embed=embed)
-        return
-
-    # Get product name
-    prod = license_data.get("product", "saints-gen")
-    prod_name = "Saint's Gen" if prod == "saints-gen" else "Saint's Shot"
-
-    expires = license_data["expires_at"]
-    if isinstance(expires, str):
-        expires = datetime.fromisoformat(expires)
-    now = datetime.utcnow()
-
-    if expires < now:
-        embed = discord.Embed(
-            title=f"{prod_name} Balance",
-            description=f"{interaction.user.mention}'s license has **expired**.",
-            color=discord.Color.red()
-        )
-        embed.add_field(name="Status", value="Expired", inline=True)
-        embed.add_field(name="Expired On", value=expires.strftime("%Y-%m-%d"), inline=True)
-    else:
-        days_left = (expires - now).days
-        hours_left = int((expires - now).total_seconds() // 3600) % 24
-
-        # Color based on days left
-        if days_left > 30:
-            color = discord.Color.green()
-        elif days_left > 7:
-            color = discord.Color.gold()
-        else:
-            color = discord.Color.orange()
-
-        embed = discord.Embed(
-            title=f"{prod_name} Balance",
-            description=f"{interaction.user.mention}'s subscription is **active**.",
-            color=color
-        )
-        embed.add_field(name="Status", value="Active", inline=True)
-        embed.add_field(name="Days Left", value=f"{days_left}d {hours_left}h", inline=True)
-        embed.add_field(name="Expires", value=expires.strftime("%B %d, %Y"), inline=True)
-
-    embed.set_thumbnail(url=interaction.user.display_avatar.url)
-    await interaction.response.send_message(embed=embed)
-
-
 # ==================== REDEMPTION SYSTEM ====================
 
 @bot.tree.command(name="redeem", description="Redeem your purchase using your email")
