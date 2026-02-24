@@ -25,7 +25,7 @@ from database import (
     get_referral_count_received, get_referral_count_given, has_been_referred_by,
     add_referral, get_referral_stats, extend_user_license_for_product,
     get_pending_order_by_email, claim_pending_order, init_linked_accounts_table,
-    init_purchases_table, redeem_by_email
+    init_purchases_table, redeem_by_email, get_all_licenses_for_user
 )
 from license_crypto import generate_license_key, get_key_info
 
@@ -754,42 +754,99 @@ async def get_id(interaction: discord.Interaction):
 
 
 @bot.tree.command(name="status", description="Check your subscription status")
-@app_commands.describe(product="Which product to check status for (optional)")
-@app_commands.choices(product=PRODUCT_CHOICES)
-async def status(interaction: discord.Interaction, product: str = None):
-    """Check subscription status."""
-    license_data = await get_license_by_user(str(interaction.user.id), product)
+async def status(interaction: discord.Interaction):
+    """Check subscription status for all products."""
+    user = interaction.user
+    discord_id = str(user.id)
+    now = datetime.utcnow()
 
-    embed = discord.Embed(title="Subscription Status")
+    # Get all licenses for user
+    all_licenses = await get_all_licenses_for_user(discord_id)
 
-    if not license_data:
-        embed.color = discord.Color.red()
-        embed.description = "You don't have an active license."
+    # Filter to get best license per product (active, not revoked, latest expiry)
+    products = ["saints-gen", "saints-shot", "saintx"]
+    active_subs = {}
+
+    for prod in products:
+        prod_licenses = [
+            lic for lic in all_licenses
+            if lic.get("product") == prod and not lic.get("revoked")
+        ]
+        if prod_licenses:
+            # Get the one with latest expiry
+            best = max(prod_licenses, key=lambda x: x["expires_at"] if isinstance(x["expires_at"], datetime) else datetime.fromisoformat(str(x["expires_at"])))
+            expires = best["expires_at"]
+            if isinstance(expires, str):
+                expires = datetime.fromisoformat(expires)
+            if expires > now:
+                active_subs[prod] = {"expires": expires, "days_left": (expires - now).days}
+
+    # Build embed
+    if active_subs:
+        # Has at least one active subscription
+        embed = discord.Embed(
+            title=f"Subscription Status",
+            color=discord.Color.gold()
+        )
+        embed.set_author(name=user.display_name, icon_url=user.display_avatar.url)
+        embed.set_thumbnail(url=user.display_avatar.url)
+
+        # Add each active subscription
+        for prod in products:
+            prod_name = get_product_name(prod)
+            if prod in active_subs:
+                sub = active_subs[prod]
+                days = sub["days_left"]
+                expires = sub["expires"]
+
+                # Status emoji and color indicator
+                if days > 30:
+                    status_emoji = "🟢"
+                elif days > 7:
+                    status_emoji = "🟡"
+                else:
+                    status_emoji = "🟠"
+
+                embed.add_field(
+                    name=f"{status_emoji} {prod_name}",
+                    value=f"**{days}** days remaining\nExpires: {expires.strftime('%b %d, %Y')}",
+                    inline=True
+                )
+            else:
+                embed.add_field(
+                    name=f"⚫ {prod_name}",
+                    value="Not subscribed",
+                    inline=True
+                )
+
+        # Add footer with user ID
+        embed.set_footer(text=f"Discord ID: {user.id}")
+
+    else:
+        # No active subscriptions
+        embed = discord.Embed(
+            title="Subscription Status",
+            description="You don't have any active subscriptions.",
+            color=discord.Color.dark_gray()
+        )
+        embed.set_author(name=user.display_name, icon_url=user.display_avatar.url)
+        embed.set_thumbnail(url=user.display_avatar.url)
+
+        # Show all products as not subscribed
+        for prod in products:
+            prod_name = get_product_name(prod)
+            embed.add_field(
+                name=f"⚫ {prod_name}",
+                value="Not subscribed",
+                inline=True
+            )
+
         embed.add_field(
-            name="How to Get Access",
-            value="Contact an admin to purchase a subscription.",
+            name="Get Access",
+            value=f"Visit {STORE_URL} to purchase a subscription!",
             inline=False
         )
-    else:
-        # Get product name
-        prod = license_data.get("product", "saints-gen")
-        prod_name = "Saint's Gen" if prod == "saints-gen" else "Saint's Shot"
-
-        expires = license_data["expires_at"]
-        if isinstance(expires, str):
-            expires = datetime.fromisoformat(expires)
-        now = datetime.utcnow()
-
-        if expires < now:
-            embed.color = discord.Color.red()
-            embed.description = f"Your **{prod_name}** license has **expired**."
-            embed.add_field(name="Expired On", value=expires.strftime("%Y-%m-%d"), inline=True)
-        else:
-            days_left = (expires - now).days
-            embed.color = discord.Color.green()
-            embed.description = f"Your **{prod_name}** license is **active**."
-            embed.add_field(name="Expires", value=expires.strftime("%Y-%m-%d"), inline=True)
-            embed.add_field(name="Days Left", value=str(days_left), inline=True)
+        embed.set_footer(text=f"Discord ID: {user.id}")
 
     await interaction.response.send_message(embed=embed)
 
