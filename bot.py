@@ -312,6 +312,7 @@ def is_admin():
 PRODUCT_CHOICES = [
     app_commands.Choice(name="Saint's Gen", value="saints-gen"),
     app_commands.Choice(name="Saint's Shot", value="saints-shot"),
+    app_commands.Choice(name="SaintX", value="saintx"),
 ]
 
 
