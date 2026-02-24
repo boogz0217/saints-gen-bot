@@ -585,7 +585,7 @@ async def check(interaction: discord.Interaction, user: discord.User):
 
     if not all_licenses:
         embed.description = f"{user.mention} has no licenses (past or present)."
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
         return
 
     # Group licenses by product
@@ -652,7 +652,7 @@ async def check(interaction: discord.Interaction, user: discord.User):
     # Add total license count
     embed.set_footer(text=f"Total licenses: {len(all_licenses)}")
 
-    await interaction.response.send_message(embed=embed)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="reset-hwid", description="Reset hardware binding for a license (allows activation on new PC)")
