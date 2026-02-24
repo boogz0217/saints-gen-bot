@@ -16,7 +16,7 @@ import aiohttp
 from config import DISCORD_TOKEN, ADMIN_IDS, SECRET_KEY, GUILD_ID, SUBSCRIBER_ROLE_ID, SAINTS_SHOT_ROLE_ID, SAINTX_ROLE_ID, STORE_URL
 from database import (
     init_db, add_license, get_license_by_key, get_license_by_user,
-    revoke_license, revoke_user_licenses, delete_license, delete_user_licenses,
+    revoke_license, revoke_user_licenses,
     extend_license, extend_user_license, get_all_active_licenses, get_license_stats,
     reset_hwid_by_key, reset_hwid_by_user, get_hwid_by_key,
     get_newly_expired_licenses, mark_expiry_notified, has_active_license,
@@ -456,37 +456,6 @@ async def revoke(
         count = await revoke_user_licenses(str(user.id))
         await interaction.response.send_message(
             f"Revoked {count} license(s) for {user.mention}."        )
-
-
-@bot.tree.command(name="delete", description="Permanently delete a license by key or user")
-@is_admin()
-@app_commands.describe(
-    key="The license key to delete (optional)",
-    user="The user whose licenses to delete (optional)"
-)
-async def delete(
-    interaction: discord.Interaction,
-    key: Optional[str] = None,
-    user: Optional[discord.User] = None
-):
-    """Permanently delete a license key or all keys for a user."""
-    if not key and not user:
-        await interaction.response.send_message(
-            "Please provide either a license key or a user."        )
-        return
-
-    if key:
-        success = await delete_license(key)
-        if success:
-            await interaction.response.send_message(
-                f"License `{key[:20]}...` has been **permanently deleted**."            )
-        else:
-            await interaction.response.send_message(
-                "License not found."            )
-    else:
-        count = await delete_user_licenses(str(user.id))
-        await interaction.response.send_message(
-            f"**Permanently deleted** {count} license(s) for {user.mention}."        )
 
 
 @bot.tree.command(name="extend", description="Add or remove days from a license (use negative to remove)")
