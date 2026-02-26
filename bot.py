@@ -1854,7 +1854,7 @@ class ExchangeSelectView(discord.ui.View):
         )
         await interaction.response.send_modal(modal)
 
-    @discord.ui.button(label="Exchange to Saint's Shot", style=discord.ButtonStyle.secondary, row=0)  # Blue/Grey
+    @discord.ui.button(label="Exchange to Saint's Shot", style=discord.ButtonStyle.success, row=0)  # Green
     async def to_shot(self, interaction: discord.Interaction, button: discord.ui.Button):
         modal = ExchangeDaysModal(
             user=self.user,
