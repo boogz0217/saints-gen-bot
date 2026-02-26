@@ -989,6 +989,28 @@ async def status(interaction: discord.Interaction):
         # Add each active subscription
         for prod in products:
             prod_name = get_product_name(prod)
+
+            # Special handling for SaintX - under maintenance
+            if prod == "saintx":
+                if prod in active_subs:
+                    sub = active_subs[prod]
+                    if sub.get("pending"):
+                        days = sub['pending_days']
+                    else:
+                        days = sub["days_left"]
+                    embed.add_field(
+                        name=f"⚠️ {prod_name}",
+                        value=f"**Under Maintenance**\n**{days}** days remaining\nUse `/exchange` to transfer to Saint's Shot",
+                        inline=True
+                    )
+                else:
+                    embed.add_field(
+                        name=f"⚠️ {prod_name}",
+                        value="Under Maintenance",
+                        inline=True
+                    )
+                continue
+
             if prod in active_subs:
                 sub = active_subs[prod]
 
@@ -1036,11 +1058,19 @@ async def status(interaction: discord.Interaction):
         # Show all products as not subscribed
         for prod in products:
             prod_name = get_product_name(prod)
-            embed.add_field(
-                name=f"⚫ {prod_name}",
-                value="Not subscribed",
-                inline=True
-            )
+            # Special handling for SaintX - under maintenance
+            if prod == "saintx":
+                embed.add_field(
+                    name=f"⚠️ {prod_name}",
+                    value="Under Maintenance",
+                    inline=True
+                )
+            else:
+                embed.add_field(
+                    name=f"⚫ {prod_name}",
+                    value="Not subscribed",
+                    inline=True
+                )
 
         embed.add_field(
             name="Get Access",
