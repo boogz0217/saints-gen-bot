@@ -923,14 +923,14 @@ async def cleanup_duplicates(interaction: discord.Interaction):
 
 # ==================== USER COMMANDS ====================
 
-@bot.tree.command(name="id", description="Get your Discord ID for checkout")
+@bot.tree.command(name="id", description="Get your Discord ID for activation")
 async def get_id(interaction: discord.Interaction):
-    """Show the user their Discord ID for use at checkout."""
+    """Show the user their Discord ID for use in programs."""
     user = interaction.user
 
     embed = discord.Embed(
         title="Your Discord ID",
-        description="Use this ID when purchasing to receive your license automatically!",
+        description="Use this ID to activate your subscription in the program.",
         color=discord.Color.blurple()
     )
     embed.add_field(
@@ -938,13 +938,7 @@ async def get_id(interaction: discord.Interaction):
         value=f"```{user.id}```",
         inline=False
     )
-    embed.add_field(
-        name="How to Use",
-        value="Copy the number above and paste it in the **Discord ID** field at checkout.",
-        inline=False
-    )
     embed.set_thumbnail(url=user.display_avatar.url)
-    embed.set_footer(text="Your license key will be sent to you via DM after purchase!")
 
     await interaction.response.send_message(embed=embed)
 
