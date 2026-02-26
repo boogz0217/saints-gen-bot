@@ -968,7 +968,12 @@ async def status(interaction: discord.Interaction):
             expires = best["expires_at"]
             if isinstance(expires, str):
                 expires = datetime.fromisoformat(expires)
-            if expires > now:
+
+            # Check if this is a pending activation license
+            pending_days = best.get("pending_days")
+            if pending_days:
+                active_subs[prod] = {"pending": True, "pending_days": pending_days}
+            elif expires > now:
                 active_subs[prod] = {"expires": expires, "days_left": (expires - now).days}
 
     # Build embed
@@ -986,22 +991,31 @@ async def status(interaction: discord.Interaction):
             prod_name = get_product_name(prod)
             if prod in active_subs:
                 sub = active_subs[prod]
-                days = sub["days_left"]
-                expires = sub["expires"]
 
-                # Status emoji and color indicator
-                if days > 30:
-                    status_emoji = "🟢"
-                elif days > 7:
-                    status_emoji = "🟡"
+                # Check if pending activation
+                if sub.get("pending"):
+                    embed.add_field(
+                        name=f"🔵 {prod_name}",
+                        value=f"**{sub['pending_days']}** days ready\nActivate by opening the program",
+                        inline=True
+                    )
                 else:
-                    status_emoji = "🟠"
+                    days = sub["days_left"]
+                    expires = sub["expires"]
 
-                embed.add_field(
-                    name=f"{status_emoji} {prod_name}",
-                    value=f"**{days}** days remaining\nExpires: {expires.strftime('%b %d, %Y')}",
-                    inline=True
-                )
+                    # Status emoji and color indicator
+                    if days > 30:
+                        status_emoji = "🟢"
+                    elif days > 7:
+                        status_emoji = "🟡"
+                    else:
+                        status_emoji = "🟠"
+
+                    embed.add_field(
+                        name=f"{status_emoji} {prod_name}",
+                        value=f"**{days}** days remaining\nExpires: {expires.strftime('%b %d, %Y')}",
+                        inline=True
+                    )
             else:
                 embed.add_field(
                     name=f"⚫ {prod_name}",
@@ -1193,6 +1207,7 @@ async def redeem(interaction: discord.Interaction, email: str):
         if new_expiry:
             expires_at = datetime.fromisoformat(new_expiry)
             extended = True
+            pending_activation = False
         else:
             embed = discord.Embed(
                 title="Error",
@@ -1202,9 +1217,12 @@ async def redeem(interaction: discord.Interaction, email: str):
             await interaction.followup.send(embed=embed)
             return
     else:
-        # No existing license - create new one
+        # No existing license - create new one with pending activation
+        # Countdown doesn't start until they use the program
         extended = False
-        expires_at = datetime.utcnow() + timedelta(days=days)
+        pending_activation = True
+        # Set a placeholder far-future date - real expiry set on first program activation
+        expires_at = datetime(2099, 12, 31, 23, 59, 59)
 
         license_key, _ = generate_license_key(
             SECRET_KEY,
@@ -1213,13 +1231,14 @@ async def redeem(interaction: discord.Interaction, email: str):
             customer_name
         )
 
-        # Save license to database
+        # Save license to database with pending_days
         success = await add_license(
             license_key=license_key,
             discord_id=str(interaction.user.id),
             discord_name=interaction.user.display_name,
             expires_at=expires_at,
-            product=product
+            product=product,
+            pending_days=days
         )
 
         if not success:
@@ -1260,15 +1279,18 @@ async def redeem(interaction: discord.Interaction, email: str):
             description=f"**+{days} days** added to your **{product_name}** license!",
             color=discord.Color.green()
         )
+        embed.add_field(name="Product", value=product_name, inline=True)
+        embed.add_field(name="Days Added", value=f"+{days} days", inline=True)
+        embed.add_field(name="Expires", value=expires_at.strftime("%B %d, %Y"), inline=True)
     else:
         embed = discord.Embed(
             title="Purchase Redeemed!",
-            description=f"Your **{product_name}** license has been activated!",
+            description=f"Your **{product_name}** license is ready!",
             color=discord.Color.green()
         )
-    embed.add_field(name="Product", value=product_name, inline=True)
-    embed.add_field(name="Days Added", value=f"+{days} days", inline=True)
-    embed.add_field(name="Expires", value=expires_at.strftime("%B %d, %Y"), inline=True)
+        embed.add_field(name="Product", value=product_name, inline=True)
+        embed.add_field(name="Duration", value=f"{days} days", inline=True)
+        embed.add_field(name="Activation", value="Countdown starts when you open the program", inline=False)
 
     if role_assigned:
         embed.add_field(name="Role", value=f"✅ {role_name} assigned", inline=False)
@@ -1291,19 +1313,22 @@ async def redeem(interaction: discord.Interaction, email: str):
     try:
         if extended:
             dm_embed = discord.Embed(
-                title=f"🎉 {product_name} License Extended!",
+                title=f"{product_name} License Extended!",
                 description=f"**+{days} days** added to your license!",
                 color=discord.Color.green()
             )
+            dm_embed.add_field(name="Product", value=product_name, inline=True)
+            dm_embed.add_field(name="Days Added", value=f"+{days} days", inline=True)
+            dm_embed.add_field(name="Expires", value=expires_at.strftime("%B %d, %Y"), inline=True)
         else:
             dm_embed = discord.Embed(
-                title=f"🎉 {product_name} License Activated!",
+                title=f"{product_name} License Ready!",
                 description="Thank you for your purchase!",
                 color=discord.Color.green()
             )
-        dm_embed.add_field(name="Product", value=product_name, inline=True)
-        dm_embed.add_field(name="Days Added", value=f"+{days} days", inline=True)
-        dm_embed.add_field(name="Expires", value=expires_at.strftime("%B %d, %Y"), inline=True)
+            dm_embed.add_field(name="Product", value=product_name, inline=True)
+            dm_embed.add_field(name="Duration", value=f"{days} days", inline=True)
+            dm_embed.add_field(name="Activation", value="Your countdown starts when you first open the program", inline=False)
         dm_embed.add_field(
             name="Next Steps",
             value=f"Go to {instructions_link} for further instructions",

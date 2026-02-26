@@ -91,6 +91,11 @@ async def init_db():
             """)
         except:
             pass
+        # Add pending_days column for licenses that haven't been activated yet
+        try:
+            await conn.execute("ALTER TABLE licenses ADD COLUMN IF NOT EXISTS pending_days INTEGER DEFAULT NULL")
+        except:
+            pass
 
         # Create pending_orders table for Shopify orders without Discord ID
         await conn.execute("""
@@ -208,16 +213,17 @@ async def add_license(
     discord_id: str,
     discord_name: str,
     expires_at: datetime,
-    product: str = "saints-gen"
+    product: str = "saints-gen",
+    pending_days: int = None
 ) -> bool:
-    """Add a new license to the database."""
+    """Add a new license to the database. If pending_days is set, countdown won't start until activation."""
     try:
         pool = await get_pool()
         async with pool.acquire() as conn:
             await conn.execute(
-                """INSERT INTO licenses (license_key, discord_id, discord_name, expires_at, product)
-                   VALUES ($1, $2, $3, $4, $5)""",
-                license_key, discord_id, discord_name, expires_at, product
+                """INSERT INTO licenses (license_key, discord_id, discord_name, expires_at, product, pending_days)
+                   VALUES ($1, $2, $3, $4, $5, $6)""",
+                license_key, discord_id, discord_name, expires_at, product, pending_days
             )
         return True
     except asyncpg.UniqueViolationError:

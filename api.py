@@ -329,7 +329,7 @@ async def auth_discord(request: DiscordAuthRequest):
         async with pool.acquire() as conn:
             # Get license for this Discord ID, filtered by product (required)
             row = await conn.fetchrow(
-                """SELECT discord_id, discord_name, expires_at, hwid, product, revoked
+                """SELECT discord_id, discord_name, expires_at, hwid, product, revoked, pending_days
                    FROM licenses
                    WHERE discord_id = $1 AND revoked = 0 AND product = $2
                    ORDER BY expires_at DESC
@@ -384,17 +384,41 @@ async def auth_discord(request: DiscordAuthRequest):
             # Bind HWID if not already bound (product-specific binding)
             if not stored_hwid and hwid:
                 license_product = row["product"] or ""
-                if license_product:
-                    # Update only the specific product's license
-                    await conn.execute(
-                        "UPDATE licenses SET hwid = $1 WHERE discord_id = $2 AND product = $3 AND revoked = 0",
-                        hwid, discord_id, license_product
-                    )
+                pending_days = row.get("pending_days")
+
+                # If this license has pending_days, activate it now (start the countdown)
+                if pending_days:
+                    from datetime import timedelta
+                    new_expires_at = datetime.utcnow() + timedelta(days=pending_days)
+                    expires_at = new_expires_at  # Update for token generation
+                    expires_timestamp = int(new_expires_at.timestamp())
+
+                    if license_product:
+                        await conn.execute(
+                            """UPDATE licenses
+                               SET hwid = $1, expires_at = $2, pending_days = NULL
+                               WHERE discord_id = $3 AND product = $4 AND revoked = 0""",
+                            hwid, new_expires_at, discord_id, license_product
+                        )
+                    else:
+                        await conn.execute(
+                            """UPDATE licenses
+                               SET hwid = $1, expires_at = $2, pending_days = NULL
+                               WHERE discord_id = $3 AND revoked = 0""",
+                            hwid, new_expires_at, discord_id
+                        )
                 else:
-                    await conn.execute(
-                        "UPDATE licenses SET hwid = $1 WHERE discord_id = $2 AND revoked = 0",
-                        hwid, discord_id
-                    )
+                    # No pending days - just bind HWID
+                    if license_product:
+                        await conn.execute(
+                            "UPDATE licenses SET hwid = $1 WHERE discord_id = $2 AND product = $3 AND revoked = 0",
+                            hwid, discord_id, license_product
+                        )
+                    else:
+                        await conn.execute(
+                            "UPDATE licenses SET hwid = $1 WHERE discord_id = $2 AND revoked = 0",
+                            hwid, discord_id
+                        )
 
             # Generate Ed25519 signed token
             username = row["discord_name"] or "User"
