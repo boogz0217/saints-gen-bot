@@ -1517,224 +1517,442 @@ async def referral_stats(interaction: discord.Interaction):
 
 # ==================== EXCHANGE SYSTEM ====================
 
-@bot.tree.command(name="exchange", description="Exchange Saint's Shot days for SaintX days")
-@app_commands.describe(days="Number of Saint's Shot days to exchange (minimum 7, you get 2/3 as SaintX days, rounded up)")
-async def exchange(interaction: discord.Interaction, days: int):
-    """Exchange Saint's Shot subscription days for SaintX days (2/3 ratio, rounded up)."""
-    await interaction.response.defer()  # Public response
+# Exchange rates based on pricing: Saint's Shot $10/week, SaintX $15/week
+# Saint's Shot -> SaintX: 10/15 = 2/3 (0.6667)
+# SaintX -> Saint's Shot: 15/10 = 3/2 (1.5)
+EXCHANGE_RATE_SHOT_TO_SAINTX = 2 / 3
+EXCHANGE_RATE_SAINTX_TO_SHOT = 3 / 2
 
+
+def format_time_duration(total_seconds: float) -> str:
+    """Format seconds into a readable duration string."""
+    days = int(total_seconds // 86400)
+    remaining = total_seconds % 86400
+    hours = int(remaining // 3600)
+    remaining = remaining % 3600
+    minutes = int(remaining // 60)
+
+    parts = []
+    if days > 0:
+        parts.append(f"{days} day{'s' if days != 1 else ''}")
+    if hours > 0:
+        parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
+    if minutes > 0 and days == 0:  # Only show minutes if less than a day
+        parts.append(f"{minutes} minute{'s' if minutes != 1 else ''}")
+
+    return ", ".join(parts) if parts else "less than a minute"
+
+
+class ExchangeConfirmView(discord.ui.View):
+    """Confirmation view for exchange - Yes/No buttons"""
+
+    def __init__(self, user: discord.User, source_product: str, target_product: str,
+                 source_seconds: float, target_seconds: float, source_license: dict, target_license: dict):
+        super().__init__(timeout=60)
+        self.user = user
+        self.source_product = source_product
+        self.target_product = target_product
+        self.source_seconds = source_seconds
+        self.target_seconds = target_seconds
+        self.source_license = source_license
+        self.target_license = target_license
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("This is not your exchange request.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Yes, Exchange", style=discord.ButtonStyle.green)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+
+        # Disable buttons
+        for item in self.children:
+            item.disabled = True
+
+        discord_id = str(self.user.id)
+        from datetime import timedelta
+
+        # Subtract time from source license
+        source_key = self.source_license.get("license_key")
+        source_days_to_subtract = self.source_seconds / 86400
+
+        if source_key:
+            new_source_expiry = await extend_license(source_key, -source_days_to_subtract)
+            if not new_source_expiry:
+                embed = discord.Embed(
+                    title="Exchange Failed",
+                    description=f"Failed to update {self.source_product} license. Please contact support.",
+                    color=discord.Color.red()
+                )
+                await interaction.edit_original_response(embed=embed, view=None)
+                return
+
+        # Calculate remaining time on source after exchange
+        source_expires = self.source_license["expires_at"]
+        if isinstance(source_expires, str):
+            source_expires = datetime.fromisoformat(source_expires)
+        remaining_source_seconds = (source_expires - datetime.utcnow()).total_seconds() - self.source_seconds
+
+        # Add time to target license
+        target_days_to_add = self.target_seconds / 86400
+        target_product_key = "saintx" if self.target_product == "SaintX" else "saints-shot"
+        source_product_key = "saintx" if self.source_product == "SaintX" else "saints-shot"
+
+        if self.target_license and not self.target_license.get("revoked"):
+            # Extend existing license
+            new_target_expiry = await extend_user_license_for_product(discord_id, target_days_to_add, target_product_key)
+            if new_target_expiry:
+                target_expires = datetime.fromisoformat(new_target_expiry)
+            else:
+                # Restore source days
+                if source_key:
+                    await extend_license(source_key, source_days_to_subtract)
+                embed = discord.Embed(
+                    title="Exchange Failed",
+                    description=f"Failed to extend {self.target_product} license. Please contact support.",
+                    color=discord.Color.red()
+                )
+                await interaction.edit_original_response(embed=embed, view=None)
+                return
+        else:
+            # Create new license
+            target_expires = datetime.utcnow() + timedelta(seconds=self.target_seconds)
+
+            license_key, _ = generate_license_key(
+                SECRET_KEY,
+                discord_id,
+                int(target_days_to_add) + 1,  # Round up for key generation
+                self.user.display_name
+            )
+
+            success = await add_license(
+                license_key=license_key,
+                discord_id=discord_id,
+                discord_name=self.user.display_name,
+                expires_at=target_expires,
+                product=target_product_key
+            )
+
+            if not success:
+                # Restore source days
+                if source_key:
+                    await extend_license(source_key, source_days_to_add)
+                embed = discord.Embed(
+                    title="Exchange Failed",
+                    description=f"Failed to create {self.target_product} license. Please contact support.",
+                    color=discord.Color.red()
+                )
+                await interaction.edit_original_response(embed=embed, view=None)
+                return
+
+        # Handle roles
+        role_changes = []
+        if GUILD_ID:
+            try:
+                guild = bot.get_guild(GUILD_ID)
+                if guild:
+                    member = guild.get_member(self.user.id) or await guild.fetch_member(self.user.id)
+                    if member:
+                        # Remove source role if no time left
+                        if remaining_source_seconds <= 0:
+                            source_role_id = SAINTX_ROLE_ID if source_product_key == "saintx" else SAINTS_SHOT_ROLE_ID
+                            if source_role_id:
+                                source_role = guild.get_role(source_role_id)
+                                if source_role and source_role in member.roles:
+                                    await member.remove_roles(source_role, reason=f"Exchanged all time for {self.target_product}")
+                                    role_changes.append(f"{self.source_product} role removed")
+
+                        # Add target role
+                        target_role_id = SAINTX_ROLE_ID if target_product_key == "saintx" else SAINTS_SHOT_ROLE_ID
+                        if target_role_id:
+                            target_role = guild.get_role(target_role_id)
+                            if target_role and target_role not in member.roles:
+                                await member.add_roles(target_role, reason=f"Exchanged from {self.source_product}")
+                                role_changes.append(f"{self.target_product} role added")
+            except Exception as e:
+                print(f"Error updating roles during exchange: {e}")
+
+        # Success embed
+        embed = discord.Embed(
+            title="Exchange Complete!",
+            description=f"{self.user.mention} exchanged {self.source_product} for {self.target_product}!",
+            color=discord.Color.green()
+        )
+        embed.add_field(name=f"{self.source_product} Used", value=f"-{format_time_duration(self.source_seconds)}", inline=True)
+        embed.add_field(name=f"{self.target_product} Received", value=f"+{format_time_duration(self.target_seconds)}", inline=True)
+
+        if remaining_source_seconds > 0:
+            embed.add_field(name=f"{self.source_product} Remaining", value=format_time_duration(remaining_source_seconds), inline=True)
+
+        embed.add_field(name=f"{self.target_product} Expires", value=target_expires.strftime("%B %d, %Y at %I:%M %p UTC"), inline=True)
+
+        if role_changes:
+            embed.add_field(name="Roles", value=", ".join(role_changes), inline=False)
+
+        if target_product_key == "saintx":
+            embed.add_field(name="Next Steps", value="Head to <#1475702262729936979> to get started with SaintX!", inline=False)
+
+        embed.set_thumbnail(url=self.user.display_avatar.url)
+        await interaction.edit_original_response(embed=embed, view=None)
+
+        # DM the user
+        try:
+            dm_embed = discord.Embed(
+                title=f"{self.target_product} Exchange Complete!",
+                description=f"You exchanged **{format_time_duration(self.source_seconds)}** of {self.source_product} for **{format_time_duration(self.target_seconds)}** of {self.target_product}!",
+                color=discord.Color.green()
+            )
+            dm_embed.add_field(name="Your Discord ID", value=f"```{self.user.id}```", inline=False)
+            dm_embed.add_field(name=f"{self.target_product} Expires", value=target_expires.strftime("%B %d, %Y at %I:%M %p UTC"), inline=True)
+            if remaining_source_seconds > 0:
+                dm_embed.add_field(name=f"{self.source_product} Remaining", value=format_time_duration(remaining_source_seconds), inline=True)
+            dm_embed.add_field(
+                name="How to Activate",
+                value=f"1. Open {self.target_product}\n2. Enter your Discord ID\n3. Click Activate",
+                inline=False
+            )
+            await self.user.send(embed=dm_embed)
+        except discord.Forbidden:
+            pass
+
+        print(f"Exchange completed: {self.user} ({self.user.id}) - {format_time_duration(self.source_seconds)} {self.source_product} -> {format_time_duration(self.target_seconds)} {self.target_product}")
+
+    @discord.ui.button(label="No, Cancel", style=discord.ButtonStyle.red)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title="Exchange Cancelled",
+            description="Your exchange request has been cancelled.",
+            color=discord.Color.grey()
+        )
+        await interaction.response.edit_message(embed=embed, view=None)
+
+
+class ExchangeDaysModal(discord.ui.Modal):
+    """Modal popup to ask how many days to exchange"""
+
+    days_input = discord.ui.TextInput(
+        label="Time to Exchange",
+        placeholder="Enter days (e.g., 5 or 3.5 for 3 days 12 hours)",
+        required=True,
+        max_length=10
+    )
+
+    def __init__(self, user: discord.User, target_product: str, source_product: str,
+                 available_seconds: float, source_license: dict, target_license: dict):
+        super().__init__(title=f"Exchange to {target_product}")
+        self.user = user
+        self.target_product = target_product
+        self.source_product = source_product
+        self.available_seconds = available_seconds
+        self.source_license = source_license
+        self.target_license = target_license
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            days = float(self.days_input.value.strip())
+            if days <= 0:
+                raise ValueError("Days must be positive")
+        except ValueError:
+            embed = discord.Embed(
+                title="Invalid Input",
+                description="Please enter a valid number of days (e.g., 5 or 3.5).",
+                color=discord.Color.red()
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        requested_seconds = days * 86400
+
+        if requested_seconds > self.available_seconds:
+            available_days = self.available_seconds / 86400
+            embed = discord.Embed(
+                title="Not Enough Time",
+                description=f"You only have **{format_time_duration(self.available_seconds)}** available to exchange.",
+                color=discord.Color.red()
+            )
+            embed.add_field(name="Requested", value=f"{days} days", inline=True)
+            embed.add_field(name="Available", value=f"{available_days:.2f} days", inline=True)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        # Calculate target time based on exchange rate
+        if self.target_product == "SaintX":
+            target_seconds = requested_seconds * EXCHANGE_RATE_SHOT_TO_SAINTX
+            rate_display = "2/3 (Saint's Shot is $10/week, SaintX is $15/week)"
+        else:
+            target_seconds = requested_seconds * EXCHANGE_RATE_SAINTX_TO_SHOT
+            rate_display = "3/2 (SaintX is $15/week, Saint's Shot is $10/week)"
+
+        # Show confirmation
+        embed = discord.Embed(
+            title="Confirm Exchange",
+            description="Are you sure you want to make this exchange?",
+            color=discord.Color.gold()
+        )
+        embed.add_field(name=f"{self.source_product} to Use", value=format_time_duration(requested_seconds), inline=True)
+        embed.add_field(name=f"{self.target_product} to Receive", value=format_time_duration(target_seconds), inline=True)
+        embed.add_field(name="Exchange Rate", value=rate_display, inline=False)
+
+        remaining_seconds = self.available_seconds - requested_seconds
+        if remaining_seconds > 0:
+            embed.add_field(name=f"{self.source_product} Remaining After", value=format_time_duration(remaining_seconds), inline=False)
+        else:
+            embed.add_field(name="Note", value=f"This will use all your {self.source_product} time.", inline=False)
+
+        confirm_view = ExchangeConfirmView(
+            user=self.user,
+            source_product=self.source_product,
+            target_product=self.target_product,
+            source_seconds=requested_seconds,
+            target_seconds=target_seconds,
+            source_license=self.source_license,
+            target_license=self.target_license
+        )
+
+        await interaction.response.send_message(embed=embed, view=confirm_view, ephemeral=True)
+
+
+class ExchangeSelectView(discord.ui.View):
+    """Initial view with buttons to select exchange direction"""
+
+    def __init__(self, user: discord.User, shot_license: dict, saintx_license: dict,
+                 shot_available_seconds: float, saintx_available_seconds: float):
+        super().__init__(timeout=120)
+        self.user = user
+        self.shot_license = shot_license
+        self.saintx_license = saintx_license
+        self.shot_available_seconds = shot_available_seconds
+        self.saintx_available_seconds = saintx_available_seconds
+
+        # SaintX is under maintenance - always disable
+        self.to_saintx.disabled = True
+        self.to_saintx.label = "Exchange to SaintX (Under Maintenance)"
+        self.to_saintx.style = discord.ButtonStyle.grey
+
+        # Disable Saint's Shot button if user doesn't have SaintX
+        if not saintx_license or saintx_available_seconds <= 0:
+            self.to_shot.disabled = True
+            self.to_shot.label = "Exchange to Saint's Shot (No SaintX)"
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("This is not your exchange request.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Exchange to SaintX", style=discord.ButtonStyle.primary, row=0)  # Purple/Blurple
+    async def to_saintx(self, interaction: discord.Interaction, button: discord.ui.Button):
+        modal = ExchangeDaysModal(
+            user=self.user,
+            target_product="SaintX",
+            source_product="Saint's Shot",
+            available_seconds=self.shot_available_seconds,
+            source_license=self.shot_license,
+            target_license=self.saintx_license
+        )
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="Exchange to Saint's Shot", style=discord.ButtonStyle.secondary, row=0)  # Blue/Grey
+    async def to_shot(self, interaction: discord.Interaction, button: discord.ui.Button):
+        modal = ExchangeDaysModal(
+            user=self.user,
+            target_product="Saint's Shot",
+            source_product="SaintX",
+            available_seconds=self.saintx_available_seconds,
+            source_license=self.saintx_license,
+            target_license=self.shot_license
+        )
+        await interaction.response.send_modal(modal)
+
+
+@bot.tree.command(name="exchange", description="Exchange subscription days between Saint's Shot and SaintX")
+async def exchange(interaction: discord.Interaction):
+    """Exchange subscription days between Saint's Shot and SaintX."""
     user = interaction.user
     discord_id = str(user.id)
 
-    if days < 7:
-        embed = discord.Embed(
-            title="Invalid Amount",
-            description=f"{user.mention} - You must exchange at least **7 days** from Saint's Shot.",
-            color=discord.Color.red()
-        )
-        await interaction.followup.send(embed=embed)
-        return
-
-    # Check if user has an active Saint's Shot license
+    # Get both licenses
     shot_license = await get_license_by_user(discord_id, "saints-shot")
-
-    if not shot_license or shot_license.get("revoked"):
-        embed = discord.Embed(
-            title="No Saint's Shot License",
-            description=f"{user.mention} - You don't have an active Saint's Shot subscription to exchange.",
-            color=discord.Color.red()
-        )
-        embed.add_field(
-            name="How to Get SaintX",
-            value="Purchase SaintX directly from the store!",
-            inline=False
-        )
-        await interaction.followup.send(embed=embed)
-        return
-
-    # Calculate remaining days
-    expires = shot_license["expires_at"]
-    if isinstance(expires, str):
-        expires = datetime.fromisoformat(expires)
+    saintx_license = await get_license_by_user(discord_id, "saintx")
 
     now = datetime.utcnow()
 
-    if expires < now:
+    # Calculate available time for each
+    shot_available_seconds = 0
+    if shot_license and not shot_license.get("revoked"):
+        shot_expires = shot_license["expires_at"]
+        if isinstance(shot_expires, str):
+            shot_expires = datetime.fromisoformat(shot_expires)
+        if shot_expires > now:
+            shot_available_seconds = (shot_expires - now).total_seconds()
+
+    saintx_available_seconds = 0
+    if saintx_license and not saintx_license.get("revoked"):
+        saintx_expires = saintx_license["expires_at"]
+        if isinstance(saintx_expires, str):
+            saintx_expires = datetime.fromisoformat(saintx_expires)
+        if saintx_expires > now:
+            saintx_available_seconds = (saintx_expires - now).total_seconds()
+
+    # Check if user has any active license
+    if shot_available_seconds <= 0 and saintx_available_seconds <= 0:
         embed = discord.Embed(
-            title="License Expired",
-            description=f"{user.mention} - Your Saint's Shot license has already expired.",
+            title="No Active Subscriptions",
+            description=f"{user.mention} - You don't have any active subscriptions to exchange.",
             color=discord.Color.red()
         )
-        await interaction.followup.send(embed=embed)
+        embed.add_field(
+            name="How to Get Started",
+            value="Purchase a subscription from the store!",
+            inline=False
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
         return
 
-    # Calculate remaining days (round down to be fair)
-    remaining_seconds = (expires - now).total_seconds()
-    available_days = int(remaining_seconds / 86400)  # 86400 seconds in a day
-
-    if available_days < 1:
-        embed = discord.Embed(
-            title="Not Enough Time",
-            description=f"{user.mention} - You have less than 1 day remaining on your Saint's Shot license.",
-            color=discord.Color.red()
-        )
-        await interaction.followup.send(embed=embed)
-        return
-
-    if days > available_days:
-        embed = discord.Embed(
-            title="Not Enough Days",
-            description=f"{user.mention} - You only have **{available_days}** days available to exchange.",
-            color=discord.Color.red()
-        )
-        embed.add_field(name="Requested", value=f"{days} days", inline=True)
-        embed.add_field(name="Available", value=f"{available_days} days", inline=True)
-        await interaction.followup.send(embed=embed)
-        return
-
-    # Calculate SaintX days (2/3 ratio, rounded up)
-    saintx_days = math.ceil(days * 2 / 3)
-
-    # Subtract days from Saint's Shot license
-    shot_key = shot_license.get("license_key")
-    if shot_key:
-        new_shot_expiry = await extend_license(shot_key, -days)
-        if not new_shot_expiry:
-            embed = discord.Embed(
-                title="Exchange Failed",
-                description=f"{user.mention} - Failed to update Saint's Shot license. Please contact support.",
-                color=discord.Color.red()
-            )
-            await interaction.followup.send(embed=embed)
-            return
-
-    # Check if user already has SaintX license - extend it if so
-    existing_saintx = await get_license_by_user(discord_id, "saintx")
-
-    from datetime import timedelta
-
-    if existing_saintx and not existing_saintx.get("revoked"):
-        # Extend existing SaintX license
-        new_saintx_expiry = await extend_user_license_for_product(discord_id, saintx_days, "saintx")
-        if new_saintx_expiry:
-            saintx_expires = datetime.fromisoformat(new_saintx_expiry)
-            extended = True
-        else:
-            embed = discord.Embed(
-                title="Exchange Failed",
-                description=f"{user.mention} - Failed to extend SaintX license. Please contact support.",
-                color=discord.Color.red()
-            )
-            await interaction.followup.send(embed=embed)
-            return
-    else:
-        # Create new SaintX license
-        extended = False
-        saintx_expires = datetime.utcnow() + timedelta(days=saintx_days)
-
-        license_key, _ = generate_license_key(
-            SECRET_KEY,
-            discord_id,
-            saintx_days,
-            user.display_name
-        )
-
-        success = await add_license(
-            license_key=license_key,
-            discord_id=discord_id,
-            discord_name=user.display_name,
-            expires_at=saintx_expires,
-            product="saintx"
-        )
-
-        if not success:
-            # Try to restore Saint's Shot days
-            if shot_key:
-                await extend_license(shot_key, days)
-            embed = discord.Embed(
-                title="Exchange Failed",
-                description=f"{user.mention} - Failed to create SaintX license. Please contact support.",
-                color=discord.Color.red()
-            )
-            await interaction.followup.send(embed=embed)
-            return
-
-    # Calculate remaining Saint's Shot days after exchange
-    remaining_shot_days = available_days - days
-
-    # Handle roles
-    role_changes = []
-    if GUILD_ID:
-        try:
-            guild = bot.get_guild(GUILD_ID)
-            if guild:
-                member = guild.get_member(user.id) or await guild.fetch_member(user.id)
-                if member:
-                    # Remove Saint's Shot role only if no days left
-                    if remaining_shot_days <= 0 and SAINTS_SHOT_ROLE_ID:
-                        shot_role = guild.get_role(SAINTS_SHOT_ROLE_ID)
-                        if shot_role and shot_role in member.roles:
-                            await member.remove_roles(shot_role, reason="Exchanged all days for SaintX")
-                            role_changes.append("Saint's Shot role removed")
-
-                    # Add SaintX role
-                    if SAINTX_ROLE_ID:
-                        saintx_role = guild.get_role(SAINTX_ROLE_ID)
-                        if saintx_role and saintx_role not in member.roles:
-                            await member.add_roles(saintx_role, reason="Exchanged from Saint's Shot")
-                            role_changes.append("SaintX role added")
-        except Exception as e:
-            print(f"Error updating roles during exchange: {e}")
-
-    # Success embed (public)
+    # Show selection view
     embed = discord.Embed(
-        title="Exchange Complete!",
-        description=f"{user.mention} exchanged Saint's Shot days for SaintX!",
-        color=discord.Color.green()
+        title="Exchange Subscription Time",
+        description="Select which product you want to exchange **to**:",
+        color=discord.Color.blue()
     )
-    embed.add_field(name="Saint's Shot Used", value=f"-{days} days", inline=True)
-    embed.add_field(name="SaintX Received", value=f"+{saintx_days} days", inline=True)
-    embed.add_field(name="Exchange Rate", value="2/3 (rounded up)", inline=True)
 
-    if remaining_shot_days > 0:
-        embed.add_field(name="Saint's Shot Remaining", value=f"{remaining_shot_days} days", inline=True)
-
-    embed.add_field(name="SaintX Expires", value=saintx_expires.strftime("%B %d, %Y"), inline=True)
-
-    if role_changes:
-        embed.add_field(name="Roles", value=", ".join(role_changes), inline=False)
-
-    embed.add_field(name="Next Steps", value="Head to <#1475702262729936979> to get started with SaintX!", inline=False)
-
-    embed.set_thumbnail(url=user.display_avatar.url)
-    await interaction.followup.send(embed=embed)
-
-    # DM the user with activation info
-    try:
-        dm_embed = discord.Embed(
-            title="SaintX Exchange Complete!",
-            description=f"You exchanged **{days}** Saint's Shot days for **{saintx_days}** SaintX days!",
-            color=discord.Color.green()
+    if shot_available_seconds > 0:
+        embed.add_field(
+            name="Saint's Shot Available",
+            value=f"{format_time_duration(shot_available_seconds)}",
+            inline=True
         )
-        dm_embed.add_field(name="Your Discord ID", value=f"```{user.id}```", inline=False)
-        dm_embed.add_field(name="SaintX Expires", value=saintx_expires.strftime("%B %d, %Y"), inline=True)
-        if remaining_shot_days > 0:
-            dm_embed.add_field(name="Saint's Shot Remaining", value=f"{remaining_shot_days} days", inline=True)
-        dm_embed.add_field(
-            name="How to Activate",
-            value="1. Open SaintX\n2. Enter your Discord ID\n3. Click Activate",
-            inline=False
-        )
-        dm_embed.add_field(
-            name="Get Started",
-            value="Visit the SaintX channel in the server for setup instructions and support!",
-            inline=False
-        )
-        await user.send(embed=dm_embed)
-    except discord.Forbidden:
-        pass  # DMs disabled
 
-    print(f"Exchange completed: {user} ({user.id}) - {days} Saint's Shot days -> {saintx_days} SaintX days")
+    if saintx_available_seconds > 0:
+        embed.add_field(
+            name="SaintX Available",
+            value=f"{format_time_duration(saintx_available_seconds)}",
+            inline=True
+        )
+
+    embed.add_field(
+        name="Exchange Rates",
+        value="**Saint's Shot → SaintX:** 2/3 (you get fewer days)\n**SaintX → Saint's Shot:** 3/2 (you get more days)\n\n*Based on pricing: Saint's Shot $10/week, SaintX $15/week*",
+        inline=False
+    )
+
+    embed.add_field(
+        name="⚠️ Notice",
+        value="Exchange to SaintX is currently **under maintenance**.",
+        inline=False
+    )
+
+    view = ExchangeSelectView(
+        user=user,
+        shot_license=shot_license,
+        saintx_license=saintx_license,
+        shot_available_seconds=shot_available_seconds,
+        saintx_available_seconds=saintx_available_seconds
+    )
+
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
 # ==================== ERROR HANDLING ====================
