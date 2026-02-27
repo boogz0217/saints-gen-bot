@@ -64,6 +64,8 @@ class LicenseBot(commands.Bot):
         print(f"Saint's Shot Role ID: {SAINTS_SHOT_ROLE_ID}")
         print(f"SaintX Role ID: {SAINTX_ROLE_ID}")
         print("------")
+        # Update status message on startup
+        await update_status_message()
 
     async def close(self):
         """Clean up resources when bot shuts down."""
@@ -325,6 +327,8 @@ def get_product_name(product: str) -> str:
     """Get display name for a product."""
     names = {
         "saints-gen": "Saint's Gen",
+        "saints-gen-gen": "Saint's Gen - Gen Mode",
+        "saints-gen-xp": "Saint's Gen - XP Mode",
         "saints-shot": "Saint's Shot",
         "saintx": "SaintX"
     }
@@ -333,6 +337,113 @@ def get_product_name(product: str) -> str:
 
 # Audit log channel
 AUDIT_LOG_CHANNEL_ID = 1290509478445322292
+
+# Status channel
+STATUS_CHANNEL_ID = 1476776091963228303
+STATUS_MESSAGE_ID = None  # Will be set when bot sends/finds the status message
+
+# ==================== PRODUCT STATUS ====================
+# Status values: "undetected", "risky", "detected", "maintenance"
+PRODUCT_STATUS = {
+    "saints-gen-gen": "risky",      # Saint's Gen - Gen Mode
+    "saints-gen-xp": "undetected",  # Saint's Gen - XP Mode
+    "saints-shot": "undetected",
+    "saintx": "maintenance"  # SaintX starts under maintenance
+}
+
+STATUS_DISPLAY = {
+    "undetected": {"emoji": "🟢", "label": "Undetected", "color": discord.Color.green()},
+    "risky": {"emoji": "🟡", "label": "Use At Your Own Risk", "color": discord.Color.gold()},
+    "detected": {"emoji": "🔴", "label": "Detected", "color": discord.Color.red()},
+    "maintenance": {"emoji": "⚠️", "label": "Under Maintenance", "color": discord.Color.orange()}
+}
+
+
+def build_status_embed() -> discord.Embed:
+    """Build the status embed showing all product statuses."""
+    embed = discord.Embed(
+        title="🛡️ Product Status",
+        description="Current detection status for all products",
+        color=discord.Color.blurple(),
+        timestamp=datetime.utcnow()
+    )
+
+    # Saint's Gen with sub-modes
+    gen_mode_status = PRODUCT_STATUS.get("saints-gen-gen", "undetected")
+    xp_mode_status = PRODUCT_STATUS.get("saints-gen-xp", "undetected")
+    gen_mode_info = STATUS_DISPLAY.get(gen_mode_status, STATUS_DISPLAY["undetected"])
+    xp_mode_info = STATUS_DISPLAY.get(xp_mode_status, STATUS_DISPLAY["undetected"])
+
+    embed.add_field(
+        name="Saint's Gen",
+        value=f"Gen Mode: {gen_mode_info['emoji']} {gen_mode_info['label']}\nXP Mode: {xp_mode_info['emoji']} {xp_mode_info['label']}",
+        inline=False
+    )
+
+    # Saint's Shot
+    shot_status = PRODUCT_STATUS.get("saints-shot", "undetected")
+    shot_info = STATUS_DISPLAY.get(shot_status, STATUS_DISPLAY["undetected"])
+    embed.add_field(
+        name="Saint's Shot",
+        value=f"{shot_info['emoji']} {shot_info['label']}",
+        inline=False
+    )
+
+    # SaintX
+    saintx_status = PRODUCT_STATUS.get("saintx", "undetected")
+    saintx_info = STATUS_DISPLAY.get(saintx_status, STATUS_DISPLAY["undetected"])
+    embed.add_field(
+        name="SaintX",
+        value=f"{saintx_info['emoji']} {saintx_info['label']}",
+        inline=False
+    )
+
+    embed.set_footer(text="Last updated")
+    return embed
+
+
+async def update_status_message():
+    """Update or create the status message in the status channel."""
+    global STATUS_MESSAGE_ID
+
+    channel = bot.get_channel(STATUS_CHANNEL_ID)
+    if not channel:
+        print(f"Could not find status channel {STATUS_CHANNEL_ID}")
+        return
+
+    embed = build_status_embed()
+
+    # Try to edit existing message
+    if STATUS_MESSAGE_ID:
+        try:
+            message = await channel.fetch_message(STATUS_MESSAGE_ID)
+            await message.edit(embed=embed)
+            print("Updated status message")
+            return
+        except discord.NotFound:
+            STATUS_MESSAGE_ID = None
+        except Exception as e:
+            print(f"Error editing status message: {e}")
+
+    # Look for existing bot message in channel
+    try:
+        async for message in channel.history(limit=50):
+            if message.author == bot.user and message.embeds:
+                if message.embeds[0].title == "🛡️ Product Status":
+                    STATUS_MESSAGE_ID = message.id
+                    await message.edit(embed=embed)
+                    print(f"Found and updated existing status message: {STATUS_MESSAGE_ID}")
+                    return
+    except Exception as e:
+        print(f"Error searching for status message: {e}")
+
+    # Send new message
+    try:
+        message = await channel.send(embed=embed)
+        STATUS_MESSAGE_ID = message.id
+        print(f"Sent new status message: {STATUS_MESSAGE_ID}")
+    except Exception as e:
+        print(f"Error sending status message: {e}")
 
 
 async def send_audit_log(title: str, description: str, admin: discord.User, color: discord.Color = discord.Color.blue(), fields: list = None):
@@ -2002,6 +2113,67 @@ async def exchange(interaction: discord.Interaction):
     )
 
     await interaction.response.send_message(embed=embed, view=view)
+
+
+# ==================== STATUS COMMAND ====================
+
+STATUS_CHOICES = [
+    app_commands.Choice(name="🟢 Undetected", value="undetected"),
+    app_commands.Choice(name="🟡 Use At Your Own Risk", value="risky"),
+    app_commands.Choice(name="🔴 Detected", value="detected"),
+    app_commands.Choice(name="⚠️ Under Maintenance", value="maintenance"),
+]
+
+PRODUCT_CHOICES_STATUS = [
+    app_commands.Choice(name="Saint's Gen - Gen Mode", value="saints-gen-gen"),
+    app_commands.Choice(name="Saint's Gen - XP Mode", value="saints-gen-xp"),
+    app_commands.Choice(name="Saint's Shot", value="saints-shot"),
+    app_commands.Choice(name="SaintX", value="saintx"),
+]
+
+
+@bot.tree.command(name="setstatus", description="Set the detection status for a product")
+@is_admin()
+@app_commands.describe(
+    product="Which product to set status for",
+    status="The new status"
+)
+@app_commands.choices(product=PRODUCT_CHOICES_STATUS, status=STATUS_CHOICES)
+async def setstatus(interaction: discord.Interaction, product: str, status: str):
+    """Set the detection status for a product (admin only)."""
+    old_status = PRODUCT_STATUS.get(product, "undetected")
+    PRODUCT_STATUS[product] = status
+
+    product_name = get_product_name(product)
+    old_info = STATUS_DISPLAY.get(old_status, STATUS_DISPLAY["undetected"])
+    new_info = STATUS_DISPLAY.get(status, STATUS_DISPLAY["undetected"])
+
+    # Update the status message in the channel
+    await update_status_message()
+
+    # Respond to admin
+    embed = discord.Embed(
+        title="Status Updated",
+        description=f"**{product_name}** status has been updated.",
+        color=new_info["color"]
+    )
+    embed.add_field(name="Previous", value=f"{old_info['emoji']} {old_info['label']}", inline=True)
+    embed.add_field(name="New", value=f"{new_info['emoji']} {new_info['label']}", inline=True)
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # Audit log
+    await send_audit_log(
+        title="Product Status Changed",
+        description=f"Updated **{product_name}** status",
+        admin=interaction.user,
+        color=new_info["color"],
+        fields=[
+            {"name": "Product", "value": product_name, "inline": True},
+            {"name": "Old Status", "value": f"{old_info['emoji']} {old_info['label']}", "inline": True},
+            {"name": "New Status", "value": f"{new_info['emoji']} {new_info['label']}", "inline": True},
+        ]
+    )
 
 
 # ==================== ERROR HANDLING ====================
