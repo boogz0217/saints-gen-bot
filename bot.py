@@ -35,6 +35,7 @@ class LicenseBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
         intents.members = True  # Needed to fetch member info
+        intents.message_content = True  # Needed to read message content for auto-help
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
@@ -302,6 +303,63 @@ class LicenseBot(commands.Bot):
 
 
 bot = LicenseBot()
+
+
+# ==================== AUTO-HELP FOR REDEMPTION ====================
+# Keywords that suggest a user is confused about how to redeem
+REDEEM_HELP_KEYWORDS = [
+    "how do i activate",
+    "how do i redeem",
+    "how to activate",
+    "how to redeem",
+    "i bought",
+    "i purchased",
+    "just bought",
+    "just purchased",
+    "where do i",
+    "what do i do",
+    "how do i use",
+    "how do i get my",
+    "activate my license",
+    "redeem my license",
+    "i paid",
+    "after buying",
+    "after purchase",
+    "now what",
+]
+
+
+@bot.event
+async def on_message(message: discord.Message):
+    # Ignore bot messages
+    if message.author.bot:
+        return
+
+    # Check if message contains any help keywords
+    content_lower = message.content.lower()
+
+    if any(keyword in content_lower for keyword in REDEEM_HELP_KEYWORDS):
+        embed = discord.Embed(
+            title="How to Redeem Your Purchase",
+            description="Thanks for your purchase! Follow these steps to activate your license:",
+            color=discord.Color.blue()
+        )
+        embed.add_field(
+            name="Step 1",
+            value="Make sure you're using the **same email** you purchased with",
+            inline=False
+        )
+        embed.add_field(
+            name="Step 2",
+            value="Use the command:\n```/redeem your@email.com```\nReplace `your@email.com` with your purchase email",
+            inline=False
+        )
+        embed.set_footer(text="Still having issues? Contact support!")
+
+        await message.reply(embed=embed, mention_author=False)
+
+    # Process commands if any
+    await bot.process_commands(message)
 
 
 def is_admin():
