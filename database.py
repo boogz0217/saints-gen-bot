@@ -84,6 +84,10 @@ async def init_db():
             await conn.execute("ALTER TABLE licenses ADD COLUMN IF NOT EXISTS product TEXT DEFAULT 'saints-gen'")
         except:
             pass
+        try:
+            await conn.execute("ALTER TABLE licenses ADD COLUMN IF NOT EXISTS warning_notified INTEGER DEFAULT 0")
+        except:
+            pass
         # Create product index after ensuring column exists
         try:
             await conn.execute("""
@@ -507,6 +511,33 @@ async def mark_expiry_notified(license_key: str) -> bool:
     async with pool.acquire() as conn:
         result = await conn.execute(
             "UPDATE licenses SET expiry_notified = 1 WHERE license_key = $1",
+            license_key
+        )
+        return result != "UPDATE 0"
+
+
+async def get_licenses_expiring_soon(days: int = 3) -> List[Dict]:
+    """Get licenses expiring within the specified days that haven't been warned yet."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        now = datetime.utcnow()
+        expiry_threshold = now + timedelta(days=days)
+        rows = await conn.fetch(
+            """SELECT * FROM licenses
+               WHERE expires_at > $1 AND expires_at <= $2
+               AND revoked = 0 AND warning_notified = 0
+               AND pending_days IS NULL""",
+            now, expiry_threshold
+        )
+        return [dict(row) for row in rows]
+
+
+async def mark_warning_notified(license_key: str) -> bool:
+    """Mark a license as having been sent an expiry warning."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "UPDATE licenses SET warning_notified = 1 WHERE license_key = $1",
             license_key
         )
         return result != "UPDATE 0"
