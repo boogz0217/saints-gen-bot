@@ -2264,6 +2264,8 @@ class ExchangeSelectView(discord.ui.View):
 
 
 @bot.tree.command(name="exchange", description="Exchange subscription days between Saint's Shot and SaintX")
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 async def exchange(interaction: discord.Interaction):
     """Exchange subscription days between Saint's Shot and SaintX."""
     user = interaction.user
