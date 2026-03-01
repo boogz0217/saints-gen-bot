@@ -484,7 +484,7 @@ PRODUCT_STATUS = {
     "saints-gen-gen": "risky",      # Saint's Gen - Gen Mode
     "saints-gen-xp": "undetected",  # Saint's Gen - XP Mode
     "saints-shot": "undetected",
-    "saintx": "maintenance"  # SaintX starts under maintenance
+    "saintx": "undetected"  # SaintX is now live
 }
 
 STATUS_DISPLAY = {
@@ -1326,27 +1326,6 @@ async def status(interaction: discord.Interaction):
         for prod in products:
             prod_name = get_product_name(prod)
 
-            # Special handling for SaintX - under maintenance
-            if prod == "saintx":
-                if prod in active_subs:
-                    sub = active_subs[prod]
-                    if sub.get("pending"):
-                        days = sub['pending_days']
-                    else:
-                        days = sub["days_left"]
-                    embed.add_field(
-                        name=f"⚠️ {prod_name}",
-                        value=f"**Under Maintenance**\n**{days}** days remaining\nUse `/exchange` to transfer to Saint's Shot",
-                        inline=True
-                    )
-                else:
-                    embed.add_field(
-                        name=f"⚠️ {prod_name}",
-                        value="Under Maintenance",
-                        inline=True
-                    )
-                continue
-
             if prod in active_subs:
                 sub = active_subs[prod]
 
@@ -1394,19 +1373,11 @@ async def status(interaction: discord.Interaction):
         # Show all products as not subscribed
         for prod in products:
             prod_name = get_product_name(prod)
-            # Special handling for SaintX - under maintenance
-            if prod == "saintx":
-                embed.add_field(
-                    name=f"⚠️ {prod_name}",
-                    value="Under Maintenance",
-                    inline=True
-                )
-            else:
-                embed.add_field(
-                    name=f"⚫ {prod_name}",
-                    value="Not subscribed",
-                    inline=True
-                )
+            embed.add_field(
+                name=f"⚫ {prod_name}",
+                value="Not subscribed",
+                inline=True
+            )
 
         embed.add_field(
             name="Get Access",
@@ -2251,10 +2222,10 @@ class ExchangeSelectView(discord.ui.View):
         self.shot_available_seconds = shot_available_seconds
         self.saintx_available_seconds = saintx_available_seconds
 
-        # SaintX is under maintenance - always disable
-        self.to_saintx.disabled = True
-        self.to_saintx.label = "Exchange to SaintX (Under Maintenance)"
-        self.to_saintx.style = discord.ButtonStyle.grey
+        # Disable SaintX button if user doesn't have Saint's Shot
+        if not shot_license or shot_available_seconds <= 0:
+            self.to_saintx.disabled = True
+            self.to_saintx.label = "Exchange to SaintX (No Saint's Shot)"
 
         # Disable Saint's Shot button if user doesn't have SaintX
         if not saintx_license or saintx_available_seconds <= 0:
@@ -2360,12 +2331,6 @@ async def exchange(interaction: discord.Interaction):
     embed.add_field(
         name="Exchange Rates",
         value="**Saint's Shot → SaintX:** 2/3 (you get fewer days)\n**SaintX → Saint's Shot:** 3/2 (you get more days)\n\n*Based on pricing: Saint's Shot $10/week, SaintX $15/week*",
-        inline=False
-    )
-
-    embed.add_field(
-        name="⚠️ Notice",
-        value="Exchange to SaintX is currently **under maintenance**.",
         inline=False
     )
 
