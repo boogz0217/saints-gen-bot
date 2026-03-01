@@ -2207,7 +2207,7 @@ class ExchangeDaysModal(discord.ui.Modal):
             target_license=self.target_license
         )
 
-        await interaction.response.send_message(embed=embed, view=confirm_view, ephemeral=True)
+        await interaction.response.send_message(embed=embed, view=confirm_view)
 
 
 class ExchangeSelectView(discord.ui.View):
