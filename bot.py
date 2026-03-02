@@ -397,12 +397,59 @@ REDEEM_HELP_KEYWORDS = [
 auto_help_cooldowns = {}
 AUTO_HELP_COOLDOWN_SECONDS = 300  # 5 minutes
 
+# Owner mention tracking (user_id -> {"count": int, "first_mention": timestamp, "warned": bool})
+OWNER_ID = 1015259363478339644
+owner_mention_tracker = {}
+OWNER_MENTION_WINDOW_SECONDS = 300  # 5 minute window
+OWNER_MENTION_THRESHOLD = 2  # Warn after 2 mentions
+
 
 @bot.event
 async def on_message(message: discord.Message):
     # Ignore bot messages
     if message.author.bot:
         return
+
+    # Check if message mentions the owner
+    if any(mention.id == OWNER_ID for mention in message.mentions):
+        user_id = message.author.id
+        current_time = time.time()
+
+        # Don't track owner mentioning themselves
+        if user_id != OWNER_ID:
+            # Get or create tracker for this user
+            if user_id not in owner_mention_tracker:
+                owner_mention_tracker[user_id] = {
+                    "count": 0,
+                    "first_mention": current_time,
+                    "warned": False
+                }
+
+            tracker = owner_mention_tracker[user_id]
+
+            # Reset if outside the time window
+            if current_time - tracker["first_mention"] > OWNER_MENTION_WINDOW_SECONDS:
+                tracker["count"] = 0
+                tracker["first_mention"] = current_time
+                tracker["warned"] = False
+
+            # Increment count
+            tracker["count"] += 1
+
+            # Warn if threshold reached and not already warned
+            if tracker["count"] >= OWNER_MENTION_THRESHOLD and not tracker["warned"]:
+                tracker["warned"] = True
+                embed = discord.Embed(
+                    title="⏳ Please Be Patient",
+                    description=(
+                        "Hey! The owner is likely **busy or sleeping** right now.\n\n"
+                        "They will get to your message as soon as possible. "
+                        "Please avoid tagging multiple times - it doesn't speed things up!\n\n"
+                        "Thank you for your patience! 🙏"
+                    ),
+                    color=discord.Color.orange()
+                )
+                await message.reply(embed=embed, mention_author=True)
 
     # Check if message contains any help keywords
     content_lower = message.content.lower()
