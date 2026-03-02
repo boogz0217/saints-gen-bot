@@ -1782,7 +1782,7 @@ async def referral(interaction: discord.Interaction, user1: discord.User, user2:
             f"Both users have either reached the maximum referrals ({MAX_REFERRALS}) or already exchanged referrals.", ephemeral=True)
         return
 
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=False)  # Show publicly so users in ticket can see
 
     results = []
     user1_new_expiry = None
