@@ -12,6 +12,10 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
 ADMIN_IDS_STR = os.getenv("ADMIN_IDS", "")
 ADMIN_IDS = [int(id.strip()) for id in ADMIN_IDS_STR.split(",") if id.strip()]
 
+# Helper/Moderator IDs - can use /referral and /reset-hwid commands
+HELPER_IDS_STR = os.getenv("HELPER_IDS", "986294916927860856")
+HELPER_IDS = [int(id.strip()) for id in HELPER_IDS_STR.split(",") if id.strip()]
+
 # Secret key for HMAC signing of license keys
 # IMPORTANT: This must match the key in the macro app
 SECRET_KEY = os.getenv("SECRET_KEY", "84e1164ba91f2831011564f7883b7a73faadbe71f66c62089b61b8cedf997272")

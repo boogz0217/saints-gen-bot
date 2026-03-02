@@ -14,7 +14,7 @@ import math
 
 import aiohttp
 
-from config import DISCORD_TOKEN, ADMIN_IDS, SECRET_KEY, GUILD_ID, SUBSCRIBER_ROLE_ID, SAINTS_SHOT_ROLE_ID, SAINTX_ROLE_ID, STORE_URL
+from config import DISCORD_TOKEN, ADMIN_IDS, HELPER_IDS, SECRET_KEY, GUILD_ID, SUBSCRIBER_ROLE_ID, SAINTS_SHOT_ROLE_ID, SAINTX_ROLE_ID, STORE_URL
 from database import (
     init_db, add_license, get_license_by_key, get_license_by_user,
     revoke_license, revoke_user_licenses,
@@ -491,6 +491,13 @@ def is_admin():
     """Check if user is an admin."""
     async def predicate(interaction: discord.Interaction) -> bool:
         return interaction.user.id in ADMIN_IDS
+    return app_commands.check(predicate)
+
+
+def is_admin_or_helper():
+    """Check if user is an admin or helper (for /referral, /reset-hwid)."""
+    async def predicate(interaction: discord.Interaction) -> bool:
+        return interaction.user.id in ADMIN_IDS or interaction.user.id in HELPER_IDS
     return app_commands.check(predicate)
 
 
@@ -1150,7 +1157,7 @@ async def check(interaction: discord.Interaction, user: discord.User):
 
 
 @bot.tree.command(name="reset-hwid", description="Reset hardware binding for a license (allows activation on new PC)")
-@is_admin()
+@is_admin_or_helper()
 @app_commands.describe(
     key="The license key to reset (optional)",
     user="The user whose license to reset (optional)"
@@ -1757,8 +1764,8 @@ REFERRAL_REWARDS = {
 MAX_REFERRALS = 5
 
 
-@bot.tree.command(name="referral", description="[Admin] Record a mutual referral between two users for Saint's Shot")
-@is_admin()
+@bot.tree.command(name="referral", description="Record a mutual referral between two users for Saint's Shot")
+@is_admin_or_helper()
 @app_commands.describe(
     user1="First user in the referral exchange",
     user2="Second user in the referral exchange"
