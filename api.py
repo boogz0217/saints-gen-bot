@@ -81,8 +81,8 @@ PRODUCT_VERSIONS = {
         "message": "Please download the latest version from the Discord server."
     },
     "saintx": {
-        "current": "1.2.0",
-        "min": "1.2.0",
+        "current": "1.3.0",
+        "min": "1.3.0",
         "message": "Please download the latest version from the Discord server."
     }
 }
