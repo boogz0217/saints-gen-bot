@@ -400,7 +400,7 @@ AUTO_HELP_COOLDOWN_SECONDS = 300  # 5 minutes
 # Owner mention tracking (user_id -> {"count": int, "first_mention": timestamp, "warned": bool})
 OWNER_ID = 1015259363478339644
 owner_mention_tracker = {}
-OWNER_MENTION_WINDOW_SECONDS = 600  # 10 minute window
+OWNER_MENTION_WINDOW_SECONDS = 1800  # 30 minute window
 OWNER_MENTION_THRESHOLD = 2  # Warn after 2 mentions
 
 
