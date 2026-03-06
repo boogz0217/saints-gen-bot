@@ -65,5 +65,5 @@ Auto-deploys from GitHub - changes go live within 1-2 minutes.
 - `/extend user days product` - Add/remove days from license
 - `/list` - List active licenses
 - `/reset-hwid user` - Reset hardware binding for a user
-- `/set-status product status` - Update product detection status
+- `/setstatus product status` - Update product detection status
 - `/pending-orders` - View pending Shopify order notifications
