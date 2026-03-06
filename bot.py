@@ -23,10 +23,9 @@ from database import (
     get_newly_expired_licenses, mark_expiry_notified, has_active_license,
     has_active_license_for_product, close_pool, init_notifications_table,
     get_pending_notifications, get_failed_notifications,
-    extend_user_license_for_product,
-    get_pending_order_by_email, claim_pending_order, init_linked_accounts_table,
+    extend_user_license_for_product, init_linked_accounts_table,
     init_purchases_table, redeem_by_email, get_all_licenses_for_user,
-    cleanup_duplicate_licenses, get_licenses_expiring_soon, mark_warning_notified
+    get_licenses_expiring_soon, mark_warning_notified
 )
 from license_crypto import generate_license_key, get_key_info
 
@@ -1174,59 +1173,6 @@ async def pending_orders(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-@bot.tree.command(name="cleanup-duplicates", description="[Admin] Remove duplicate licenses, keeping the one with most days")
-@is_admin()
-async def cleanup_duplicates(interaction: discord.Interaction):
-    """Find and delete duplicate licenses, keeping only the one with the most days remaining."""
-    await interaction.response.defer(ephemeral=True)
-
-    result = await cleanup_duplicate_licenses()
-
-    if result["total_deleted"] == 0:
-        embed = discord.Embed(
-            title="No Duplicates Found",
-            description="All users have only one license per product.",
-            color=discord.Color.green()
-        )
-        await interaction.followup.send(embed=embed)
-        return
-
-    embed = discord.Embed(
-        title="Duplicate Cleanup Complete",
-        description=f"Deleted **{result['total_deleted']}** duplicate license(s)",
-        color=discord.Color.green()
-    )
-
-    # Show affected users (up to 10)
-    for i, user_info in enumerate(result["affected_users"][:10]):
-        expires = user_info["kept_expiry"]
-        if isinstance(expires, str):
-            expires = datetime.fromisoformat(expires)
-
-        embed.add_field(
-            name=f"{user_info['discord_name']} - {user_info['product']}",
-            value=f"Deleted: {user_info['deleted_count']} | Kept expiry: {expires.strftime('%Y-%m-%d')}",
-            inline=False
-        )
-
-    if len(result["affected_users"]) > 10:
-        embed.set_footer(text=f"... and {len(result['affected_users']) - 10} more users")
-
-    await interaction.followup.send(embed=embed)
-
-    # Audit log
-    await send_audit_log(
-        title="Duplicate Licenses Cleaned",
-        description=f"Removed {result['total_deleted']} duplicate licenses",
-        admin=interaction.user,
-        color=discord.Color.orange(),
-        fields=[
-            {"name": "Users Affected", "value": str(len(result["affected_users"])), "inline": True},
-            {"name": "Licenses Deleted", "value": str(result["total_deleted"]), "inline": True}
-        ]
-    )
-
-
 # ==================== USER COMMANDS ====================
 
 @bot.tree.command(name="id", description="Get your Discord ID for activation")
@@ -1356,124 +1302,6 @@ async def status(interaction: discord.Interaction):
         )
 
     await interaction.response.send_message(embed=embed)
-
-
-@bot.tree.command(name="link", description="Link your Shopify purchase to your Discord account")
-@app_commands.describe(email="The email you used for your Shopify purchase")
-async def link_purchase(interaction: discord.Interaction, email: str):
-    """Link a Shopify purchase to claim your license."""
-    await interaction.response.defer()
-
-    email = email.lower().strip()
-    discord_id = str(interaction.user.id)
-    discord_name = str(interaction.user)
-
-    # Check for pending order with this email
-    pending = await get_pending_order_by_email(email)
-
-    if not pending:
-        embed = discord.Embed(
-            title="No Order Found",
-            description=f"No pending order found for **{email}**.\n\n"
-                        "Make sure you're using the exact email from your Shopify purchase.",
-            color=discord.Color.red()
-        )
-        embed.add_field(
-            name="Already Linked?",
-            value="If you've already linked your order, use `/status` to check your subscription.",
-            inline=False
-        )
-        await interaction.followup.send(embed=embed)
-        return
-
-    product = pending["product"]
-    days = pending["days"]
-    order_number = pending.get("order_number", "Unknown")
-
-    from datetime import timedelta
-
-    # Check if user already has a license for this product - extend it if so
-    existing_license = await get_license_by_user(discord_id, product)
-    extended = False
-
-    if existing_license and not existing_license.get("revoked"):
-        # Extend existing license
-        new_expiry = await extend_user_license_for_product(discord_id, days, product)
-        if new_expiry:
-            expires_at = datetime.fromisoformat(new_expiry)
-            extended = True
-        else:
-            embed = discord.Embed(
-                title="Error",
-                description="Failed to extend license. Please contact support.",
-                color=discord.Color.red()
-            )
-            await interaction.followup.send(embed=embed)
-            return
-    else:
-        # Create new license
-        expires_at = datetime.utcnow() + timedelta(days=days)
-        license_key, _ = generate_license_key(SECRET_KEY, discord_id, days, discord_name)
-
-        # Add license to database
-        await add_license(license_key, discord_id, discord_name, expires_at, product)
-
-    # Mark pending order as claimed
-    await claim_pending_order(pending["id"], discord_id)
-
-    # Assign role
-    try:
-        guild = bot.get_guild(GUILD_ID)
-        if guild:
-            member = guild.get_member(interaction.user.id) or await guild.fetch_member(interaction.user.id)
-            if member:
-                role_id = get_role_id_for_product(product)
-                if role_id:
-                    role = guild.get_role(role_id)
-                    if role:
-                        await member.add_roles(role)
-                        print(f"Added {product} role to {discord_name}")
-    except Exception as e:
-        print(f"Error assigning role: {e}")
-
-    # Get product name
-    prod_name = get_product_name(product)
-
-    embed = discord.Embed(
-        title="License Extended!" if extended else "Purchase Linked Successfully!",
-        description=f"Your **{prod_name}** license has been {'extended' if extended else 'activated'}!",
-        color=discord.Color.green()
-    )
-    embed.add_field(name="Order", value=f"#{order_number}", inline=True)
-    embed.add_field(name="Days Added", value=f"+{days} days", inline=True)
-    embed.add_field(name="Expires", value=expires_at.strftime("%Y-%m-%d"), inline=True)
-    embed.add_field(
-        name="How to Use",
-        value="Open the app and login with your Discord. Your account is now authorized!",
-        inline=False
-    )
-    embed.set_footer(text="Thank you for your purchase!")
-
-    await interaction.followup.send(embed=embed)
-
-    # Also try to DM them
-    try:
-        dm_embed = discord.Embed(
-            title=f"{prod_name} License {'Extended' if extended else 'Activated'}!",
-            description=f"Your {'subscription has been extended' if extended else 'purchase has been linked to your Discord account'}.",
-            color=discord.Color.green()
-        )
-        dm_embed.add_field(name="Order", value=f"#{order_number}", inline=True)
-        dm_embed.add_field(name="Days Added", value=f"+{days} days", inline=True)
-        dm_embed.add_field(name="Expires", value=expires_at.strftime("%Y-%m-%d"), inline=True)
-        dm_embed.add_field(
-            name="Login",
-            value="Just open the app - it will recognize your Discord account automatically!",
-            inline=False
-        )
-        await interaction.user.send(embed=dm_embed)
-    except:
-        pass  # DMs might be disabled
 
 
 # ==================== REDEMPTION SYSTEM ====================
