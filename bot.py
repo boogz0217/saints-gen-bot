@@ -633,31 +633,42 @@ async def update_status_message():
 
     embed = build_status_embed()
 
-    # Try to edit existing message
-    if STATUS_MESSAGE_ID:
-        try:
-            message = await channel.fetch_message(STATUS_MESSAGE_ID)
-            await message.edit(embed=embed)
-            print("Updated status message")
-            return
-        except discord.NotFound:
-            STATUS_MESSAGE_ID = None
-        except Exception as e:
-            print(f"Error editing status message: {e}")
-
-    # Look for existing bot message in channel
+    # Find all status messages from bot and clean up duplicates
+    status_messages = []
     try:
-        async for message in channel.history(limit=50):
+        async for message in channel.history(limit=100):
             if message.author == bot.user and message.embeds:
-                if message.embeds[0].title == "SAINT GEN • STATUS MONITOR":
-                    STATUS_MESSAGE_ID = message.id
-                    await message.edit(embed=embed)
-                    print(f"Found and updated existing status message: {STATUS_MESSAGE_ID}")
-                    return
+                title = message.embeds[0].title
+                # Match current title or old titles
+                if title in ["SAINT GEN • STATUS MONITOR", "🛡️ Product Status"]:
+                    status_messages.append(message)
     except Exception as e:
-        print(f"Error searching for status message: {e}")
+        print(f"Error searching for status messages: {e}")
 
-    # Send new message
+    # Delete all but the most recent, or all old-titled ones
+    if status_messages:
+        # Sort by created time, newest first
+        status_messages.sort(key=lambda m: m.created_at, reverse=True)
+
+        # Keep the first one (newest), delete the rest
+        keep_message = status_messages[0]
+        for old_msg in status_messages[1:]:
+            try:
+                await old_msg.delete()
+                print(f"Deleted duplicate status message: {old_msg.id}")
+            except Exception as e:
+                print(f"Error deleting old status message: {e}")
+
+        # Update the kept message
+        try:
+            await keep_message.edit(embed=embed)
+            STATUS_MESSAGE_ID = keep_message.id
+            print(f"Updated status message: {STATUS_MESSAGE_ID}")
+            return
+        except Exception as e:
+            print(f"Error updating status message: {e}")
+
+    # No existing message found, send new one
     try:
         message = await channel.send(embed=embed)
         STATUS_MESSAGE_ID = message.id
