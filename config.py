@@ -12,7 +12,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
 ADMIN_IDS_STR = os.getenv("ADMIN_IDS", "")
 ADMIN_IDS = [int(id.strip()) for id in ADMIN_IDS_STR.split(",") if id.strip()]
 
-# Helper/Moderator IDs - can use /referral and /reset-hwid commands
+# Helper/Moderator IDs - can use /reset-hwid command
 HELPER_IDS_STR = os.getenv("HELPER_IDS", "986294916927860856")
 HELPER_IDS = [int(id.strip()) for id in HELPER_IDS_STR.split(",") if id.strip()]
 

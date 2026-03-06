@@ -19,7 +19,7 @@ from database import (
     init_db, add_license, get_license_by_key, get_license_by_user,
     revoke_license, revoke_user_licenses,
     extend_license, extend_user_license, get_all_active_licenses, get_license_stats,
-    reset_hwid_by_key, reset_hwid_by_user, get_hwid_by_key,
+    reset_hwid_by_user,
     get_newly_expired_licenses, mark_expiry_notified, has_active_license,
     has_active_license_for_product, close_pool, init_notifications_table,
     get_pending_notifications, get_failed_notifications,
@@ -596,11 +596,8 @@ def build_status_embed() -> discord.Embed:
         timestamp=datetime.utcnow()
     )
 
-    # Header with cool ASCII-style design
-    embed.set_author(
-        name="SAINT GEN • STATUS MONITOR",
-        icon_url="https://i.imgur.com/AfFp7pu.png"  # Replace with your logo
-    )
+    # Header with clean design
+    embed.title = "SAINT GEN • STATUS MONITOR"
 
     # Status display with visual bars
     status_text = ""
@@ -823,77 +820,47 @@ async def generate(interaction: discord.Interaction, user: discord.User, days: i
         pass  # User has DMs disabled
 
 
-@bot.tree.command(name="revoke", description="Revoke a license by key or user")
+@bot.tree.command(name="revoke", description="Revoke a user's license")
 @is_admin()
 @app_commands.describe(
-    key="The license key to revoke (optional)",
-    user="The user whose licenses to revoke (optional)"
+    user="The user whose licenses to revoke"
 )
 async def revoke(
     interaction: discord.Interaction,
-    key: Optional[str] = None,
-    user: Optional[discord.User] = None
+    user: discord.User
 ):
-    """Revoke a license key or all keys for a user."""
-    if not key and not user:
-        await interaction.response.send_message(
-            "Please provide either a license key or a user.", ephemeral=True)
-        return
-
-    if key:
-        success = await revoke_license(key)
-        if success:
-            await interaction.response.send_message(
-                f"License `{key[:20]}...` has been revoked.", ephemeral=True)
-            await send_audit_log(
-                title="License Revoked",
-                description=f"Revoked license by key",
-                admin=interaction.user,
-                color=discord.Color.red(),
-                fields=[{"name": "Key", "value": f"`{key[:20]}...`", "inline": False}]
-            )
-        else:
-            await interaction.response.send_message(
-                "License not found.", ephemeral=True)
-    else:
-        count = await revoke_user_licenses(str(user.id))
-        await interaction.response.send_message(
-            f"Revoked {count} license(s) for {user.mention}.", ephemeral=True)
-        if count > 0:
-            await send_audit_log(
-                title="Licenses Revoked",
-                description=f"Revoked all licenses for {user.mention}",
-                admin=interaction.user,
-                color=discord.Color.red(),
-                fields=[
-                    {"name": "User", "value": f"{user} (`{user.id}`)", "inline": True},
-                    {"name": "Count", "value": str(count), "inline": True}
-                ]
-            )
+    """Revoke all licenses for a user."""
+    count = await revoke_user_licenses(str(user.id))
+    await interaction.response.send_message(
+        f"Revoked {count} license(s) for {user.mention}.", ephemeral=True)
+    if count > 0:
+        await send_audit_log(
+            title="Licenses Revoked",
+            description=f"Revoked all licenses for {user.mention}",
+            admin=interaction.user,
+            color=discord.Color.red(),
+            fields=[
+                {"name": "User", "value": f"{user} (`{user.id}`)", "inline": True},
+                {"name": "Count", "value": str(count), "inline": True}
+            ]
+        )
 
 
-@bot.tree.command(name="extend", description="Add or remove days from a license (use negative to remove)")
+@bot.tree.command(name="extend", description="Add or remove days from a user's license")
 @is_admin()
 @app_commands.describe(
+    user="The user whose license to modify",
     days="Number of days to add (use negative to remove days, e.g. -5)",
-    key="The license key to modify (optional)",
-    user="The user whose license to modify (optional)",
-    product="Which product's license to modify (required when using user)"
+    product="Which product's license to modify"
 )
 @app_commands.choices(product=PRODUCT_CHOICES)
 async def extend(
     interaction: discord.Interaction,
+    user: discord.User,
     days: int,
-    key: Optional[str] = None,
-    user: Optional[discord.User] = None,
-    product: Optional[str] = None
+    product: str = "saints-gen"
 ):
-    """Add or remove days from a license. Use negative days to reduce."""
-    if not key and not user:
-        await interaction.response.send_message(
-            "Please provide either a license key or a user.", ephemeral=True)
-        return
-
+    """Add or remove days from a user's license. Use negative days to reduce."""
     if days == 0:
         await interaction.response.send_message(
             "Days cannot be 0.", ephemeral=True)
@@ -903,54 +870,27 @@ async def extend(
     action = "extended" if days > 0 else "reduced"
     days_display = f"+{days}" if days > 0 else str(days)
 
-    if key:
-        new_expiry = await extend_license(key, days)
-        if new_expiry:
-            expiry_dt = datetime.fromisoformat(new_expiry)
-            await interaction.response.send_message(
-                f"License {action} by **{days_display} days**.\nNew expiry: **{expiry_dt.strftime('%Y-%m-%d %H:%M UTC')}**", ephemeral=True)
-            await send_audit_log(
-                title=f"License {action.capitalize()}",
-                description=f"Modified license by key",
-                admin=interaction.user,
-                color=discord.Color.gold(),
-                fields=[
-                    {"name": "Key", "value": f"`{key[:20]}...`", "inline": True},
-                    {"name": "Days", "value": days_display, "inline": True},
-                    {"name": "New Expiry", "value": expiry_dt.strftime('%Y-%m-%d'), "inline": True}
-                ]
-            )
-        else:
-            await interaction.response.send_message(
-                "License not found.", ephemeral=True)
+    new_expiry = await extend_user_license_for_product(str(user.id), days, product)
+    product_name = get_product_name(product)
+    if new_expiry:
+        expiry_dt = datetime.fromisoformat(new_expiry)
+        await interaction.response.send_message(
+            f"{action.capitalize()} {user.mention}'s **{product_name}** license by **{days_display} days**.\nNew expiry: **{expiry_dt.strftime('%Y-%m-%d %H:%M UTC')}**", ephemeral=True)
+        await send_audit_log(
+            title=f"License {action.capitalize()}",
+            description=f"Modified {user.mention}'s **{product_name}** license",
+            admin=interaction.user,
+            color=discord.Color.gold(),
+            fields=[
+                {"name": "User", "value": f"{user} (`{user.id}`)", "inline": True},
+                {"name": "Product", "value": product_name, "inline": True},
+                {"name": "Days", "value": days_display, "inline": True},
+                {"name": "New Expiry", "value": expiry_dt.strftime('%Y-%m-%d'), "inline": True}
+            ]
+        )
     else:
-        # When using user, product is required
-        if not product:
-            await interaction.response.send_message(
-                "Please select a product when modifying by user.", ephemeral=True)
-            return
-
-        new_expiry = await extend_user_license_for_product(str(user.id), days, product)
-        product_name = get_product_name(product)
-        if new_expiry:
-            expiry_dt = datetime.fromisoformat(new_expiry)
-            await interaction.response.send_message(
-                f"{action.capitalize()} {user.mention}'s **{product_name}** license by **{days_display} days**.\nNew expiry: **{expiry_dt.strftime('%Y-%m-%d %H:%M UTC')}**", ephemeral=True)
-            await send_audit_log(
-                title=f"License {action.capitalize()}",
-                description=f"Modified {user.mention}'s **{product_name}** license",
-                admin=interaction.user,
-                color=discord.Color.gold(),
-                fields=[
-                    {"name": "User", "value": f"{user} (`{user.id}`)", "inline": True},
-                    {"name": "Product", "value": product_name, "inline": True},
-                    {"name": "Days", "value": days_display, "inline": True},
-                    {"name": "New Expiry", "value": expiry_dt.strftime('%Y-%m-%d'), "inline": True}
-                ]
-            )
-        else:
-            await interaction.response.send_message(
-                f"{user.mention} has no **{product_name}** license to modify.", ephemeral=True)
+        await interaction.response.send_message(
+            f"{user.mention} has no **{product_name}** license to modify.", ephemeral=True)
 
 
 @bot.tree.command(name="list", description="List all active licenses")
@@ -1174,67 +1114,27 @@ async def check(interaction: discord.Interaction, user: discord.User):
 
 @bot.tree.command(name="reset-hwid", description="Reset hardware binding for a license (allows activation on new PC)")
 @is_admin_or_helper()
-@app_commands.describe(
-    key="The license key to reset (optional)",
-    user="The user whose license to reset (optional)"
-)
-async def reset_hwid(
-    interaction: discord.Interaction,
-    key: Optional[str] = None,
-    user: Optional[discord.User] = None
-):
+@app_commands.describe(user="The user whose license to reset")
+async def reset_hwid(interaction: discord.Interaction, user: discord.User):
     """Reset hardware ID binding so the license can be activated on a new machine."""
-    if not key and not user:
+    count = await reset_hwid_by_user(str(user.id))
+    if count > 0:
         await interaction.response.send_message(
-            "Please provide either a license key or a user.", ephemeral=True)
-        return
-
-    if key:
-        # Check current binding first
-        current_hwid = await get_hwid_by_key(key)
-        if not current_hwid:
-            await interaction.response.send_message(
-                "This license is not bound to any hardware yet.", ephemeral=True)
-            return
-
-        success = await reset_hwid_by_key(key)
-        if success:
-            await interaction.response.send_message(
-                f"Hardware binding reset for license `{key[:20]}...`\n"
-                f"Previous HWID: `{current_hwid[:12]}...`\n"
-                f"The user can now activate on a new PC.", ephemeral=True)
-            await send_audit_log(
-                title="HWID Reset",
-                description="Reset hardware binding by key",
-                admin=interaction.user,
-                color=discord.Color.orange(),
-                fields=[
-                    {"name": "Key", "value": f"`{key[:20]}...`", "inline": True},
-                    {"name": "Previous HWID", "value": f"`{current_hwid[:12]}...`", "inline": True}
-                ]
-            )
-        else:
-            await interaction.response.send_message(
-                "License not found.", ephemeral=True)
+            f"Reset hardware binding for {count} license(s) for {user.mention}.\n"
+            f"They can now activate on a new PC.", ephemeral=True)
+        await send_audit_log(
+            title="HWID Reset",
+            description=f"Reset hardware binding for {user.mention}",
+            admin=interaction.user,
+            color=discord.Color.orange(),
+            fields=[
+                {"name": "User", "value": f"{user} (`{user.id}`)", "inline": True},
+                {"name": "Licenses Reset", "value": str(count), "inline": True}
+            ]
+        )
     else:
-        count = await reset_hwid_by_user(str(user.id))
-        if count > 0:
-            await interaction.response.send_message(
-                f"Reset hardware binding for {count} license(s) for {user.mention}.\n"
-                f"They can now activate on a new PC.", ephemeral=True)
-            await send_audit_log(
-                title="HWID Reset",
-                description=f"Reset hardware binding for {user.mention}",
-                admin=interaction.user,
-                color=discord.Color.orange(),
-                fields=[
-                    {"name": "User", "value": f"{user} (`{user.id}`)", "inline": True},
-                    {"name": "Licenses Reset", "value": str(count), "inline": True}
-                ]
-            )
-        else:
-            await interaction.response.send_message(
-                f"{user.mention} has no licenses to reset.", ephemeral=True)
+        await interaction.response.send_message(
+            f"{user.mention} has no licenses to reset.", ephemeral=True)
 
 
 @bot.tree.command(name="pending-orders", description="View pending/failed Shopify order notifications")
