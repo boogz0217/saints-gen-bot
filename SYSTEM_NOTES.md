@@ -1,4 +1,4 @@
-# SAINT's Gen/Shot License System - Claude Notes
+# SAINT's Gen License System - Claude Notes
 
 ## Deployment (DigitalOcean App Platform)
 **URL:** `https://saints-gen-bot-ohez9.ondigitalocean.app`
@@ -21,8 +21,6 @@ Auto-deploys from GitHub - changes go live within 1-2 minutes.
 | Product | Days | Role Variable |
 |---------|------|---------------|
 | Saint's Gen | 30 | `SUBSCRIBER_ROLE_ID` |
-| Saint's Shot Weekly | 7 | `SAINTS_SHOT_ROLE_ID` |
-| Saint's Shot Monthly | 30 | `SAINTS_SHOT_ROLE_ID` |
 
 ## How It Works
 1. Customer buys on Shopify
@@ -33,7 +31,7 @@ Auto-deploys from GitHub - changes go live within 1-2 minutes.
 6. Redemption logged to Discord channel
 
 ## Key Rules
-- One license per product per user (Saint's Gen + Saint's Shot separate)
+- One license per product per user
 - Repurchasing adds days to existing license
 - Each purchase can only be redeemed once (marked redeemed=1)
 - License tied to Discord ID (user logs in with Discord, no visible key)
@@ -41,7 +39,6 @@ Auto-deploys from GitHub - changes go live within 1-2 minutes.
 ## Discord Channels
 - **Redemption Log:** `1290509478445322292`
 - **Saint's Gen Instructions:** `1467010934613737516`
-- **Saint's Shot Instructions:** `1469757937382723727`
 - **Guild ID:** `1290387028185448469`
 
 ## Key Files

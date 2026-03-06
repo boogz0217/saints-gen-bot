@@ -56,7 +56,7 @@ def generate_signed_token(discord_id: str, username: str, expires_timestamp: int
 class DiscordAuthRequest(BaseModel):
     discord_id: str
     hwid: Optional[str] = None
-    product: Optional[str] = None  # "saints-gen" or "saints-shot"
+    product: Optional[str] = None  # "saints-gen"
     version: Optional[str] = None  # Client version for enforcement
 
 
@@ -73,16 +73,6 @@ PRODUCT_VERSIONS = {
     "saints-gen": {
         "current": "2.6.5",
         "min": "2.6.5",
-        "message": "Please download the latest version from the Discord server."
-    },
-    "saints-shot": {
-        "current": "2.2.0",
-        "min": "2.2.0",
-        "message": "Please download the latest version from the Discord server."
-    },
-    "saintx": {
-        "current": "1.3.0",
-        "min": "1.3.0",
         "message": "Please download the latest version from the Discord server."
     }
 }
@@ -173,7 +163,7 @@ async def verify_license(
     Query params:
         key: The license key to verify
         hwid: The hardware ID of the machine (optional but recommended)
-        product: The product to verify for (optional - saints-gen or saints-shot)
+        product: The product to verify for (optional - saints-gen)
         integrity: Hash of client files for tamper detection (optional)
         version: Client version string (optional)
 
@@ -231,9 +221,9 @@ async def verify_license(
                     return {"valid": False, "reason": "hwid_mismatch"}
 
             # Build feature flags based on product type
-            license_product = row["product"] or "saints-shot"
+            license_product = row["product"] or "saints-gen"
 
-            # Default features for saints-shot
+            # Default features for saints-gen
             features = {
                 "shooting": True,
                 "defense": True,
@@ -287,7 +277,7 @@ async def auth_discord(request: DiscordAuthRequest):
     Body:
         discord_id: The user's Discord ID (numeric string)
         hwid: The hardware ID of the machine (optional)
-        product: The product to authenticate for ("saints-gen" or "saints-shot")
+        product: The product to authenticate for ("saints-gen")
 
     Returns:
         {"success": true, "token": "...", "username": "...", "expires_at": "...", "product": "..."}
@@ -303,7 +293,7 @@ async def auth_discord(request: DiscordAuthRequest):
         raise HTTPException(status_code=400, detail="Invalid Discord ID format")
 
     # Require product parameter - blocks old clients that don't send it
-    valid_products = ["saints-gen", "saints-shot", "saintx"]
+    valid_products = ["saints-gen"]
     if not requested_product:
         return {
             "success": False,
@@ -341,8 +331,6 @@ async def auth_discord(request: DiscordAuthRequest):
                 if requested_product:
                     product_names = {
                         "saints-gen": "Saint's Gen",
-                        "saints-shot": "Saint's Shot",
-                        "saintx": "SaintX"
                     }
                     product_name = product_names.get(requested_product, requested_product)
                     return {
@@ -445,7 +433,7 @@ async def auth_discord(request: DiscordAuthRequest):
 # Import config for Shopify settings
 from config import (
     SHOPIFY_WEBHOOK_SECRET, SHOPIFY_PRODUCT_MAP, DEFAULT_LICENSE_DAYS,
-    SECRET_KEY, GUILD_ID, SUBSCRIBER_ROLE_ID, SAINTS_SHOT_ROLE_ID
+    SECRET_KEY, GUILD_ID, SUBSCRIBER_ROLE_ID
 )
 from license_crypto import generate_license_key
 
@@ -534,21 +522,10 @@ def get_license_config(order: dict) -> dict:
 
         print(f"Matching product: title='{title}', variant='{variant}', sku='{sku}'")
 
-        # Check for Saint's Gen first (simplest - only one option)
-        if "gen" in full_text and "shot" not in full_text:
+        # Check for Saint's Gen
+        if "gen" in full_text:
             print("Matched: Saint's Gen - 30 days")
             return {"product": "saints-gen", "days": 30}
-
-        # Check for Saint's Shot
-        if "shot" in full_text:
-            # Check for weekly (7 days) - check variant for "week"
-            if "week" in variant or "week" in full_text:
-                print("Matched: Saint's Shot Weekly - 7 days")
-                return {"product": "saints-shot", "days": 7}
-            # Monthly (30 days)
-            else:
-                print("Matched: Saint's Shot Monthly - 30 days")
-                return {"product": "saints-shot", "days": 30}
 
     # Default: saints-gen with default days
     print("No match found, defaulting to Saint's Gen - 30 days")
@@ -1346,7 +1323,7 @@ async def discord_oauth_callback(code: str = None, state: str = None, error: str
         # Mark as claimed
         await claim_pending_order(pending["id"], discord_id)
 
-        prod_name = "Saint's Gen" if product == "saints-gen" else "Saint's Shot"
+        prod_name = "Saint's Gen"
 
         return HTMLResponse(f"""
             <html>
@@ -1427,7 +1404,7 @@ async def reset_all_hwids(
     Requires X-Admin-Secret header.
 
     Query params:
-        product: Optional product filter (saints-gen or saints-shot)
+        product: Optional product filter (saints-gen)
     """
     if not secret or secret != ADMIN_SECRET:
         raise HTTPException(status_code=401, detail="Invalid admin secret")

@@ -14,7 +14,7 @@ import math
 
 import aiohttp
 
-from config import DISCORD_TOKEN, ADMIN_IDS, HELPER_IDS, SECRET_KEY, GUILD_ID, SUBSCRIBER_ROLE_ID, SAINTS_SHOT_ROLE_ID, SAINTX_ROLE_ID, STORE_URL
+from config import DISCORD_TOKEN, ADMIN_IDS, HELPER_IDS, SECRET_KEY, GUILD_ID, SUBSCRIBER_ROLE_ID, STORE_URL
 from database import (
     init_db, add_license, get_license_by_key, get_license_by_user,
     revoke_license, revoke_user_licenses,
@@ -22,9 +22,8 @@ from database import (
     reset_hwid_by_key, reset_hwid_by_user, get_hwid_by_key,
     get_newly_expired_licenses, mark_expiry_notified, has_active_license,
     has_active_license_for_product, close_pool, init_notifications_table,
-    get_pending_notifications, get_failed_notifications, init_referrals_table,
-    get_referral_count_received, get_referral_count_given, has_been_referred_by,
-    add_referral, get_referral_stats, extend_user_license_for_product,
+    get_pending_notifications, get_failed_notifications,
+    extend_user_license_for_product,
     get_pending_order_by_email, claim_pending_order, init_linked_accounts_table,
     init_purchases_table, redeem_by_email, get_all_licenses_for_user,
     cleanup_duplicate_licenses, get_licenses_expiring_soon, mark_warning_notified
@@ -43,7 +42,6 @@ class LicenseBot(commands.Bot):
         # Initialize database
         await init_db()
         await init_notifications_table()
-        await init_referrals_table()
         await init_linked_accounts_table()
         await init_purchases_table()
         # Sync slash commands globally and to specific guild for instant availability
@@ -64,8 +62,6 @@ class LicenseBot(commands.Bot):
         print(f"Admin IDs: {ADMIN_IDS}")
         print(f"Guild ID: {GUILD_ID}")
         print(f"Subscriber Role ID: {SUBSCRIBER_ROLE_ID}")
-        print(f"Saint's Shot Role ID: {SAINTS_SHOT_ROLE_ID}")
-        print(f"SaintX Role ID: {SAINTX_ROLE_ID}")
         print("------")
         # Update status message on startup
         await update_status_message()
@@ -505,12 +501,8 @@ def is_admin_or_helper():
 
 def get_role_id_for_product(product: str) -> int:
     """Get the role ID for a given product."""
-    if product == "saints-shot":
-        return SAINTS_SHOT_ROLE_ID
-    elif product == "saintx":
-        return SAINTX_ROLE_ID
-    else:  # saints-gen or default
-        return SUBSCRIBER_ROLE_ID
+    # saints-gen is the only product now
+    return SUBSCRIBER_ROLE_ID
 
 
 def get_product_name(product: str) -> str:
@@ -519,8 +511,6 @@ def get_product_name(product: str) -> str:
         "saints-gen": "Saint's Gen",
         "saints-gen-gen": "Saint's Gen - Gen Mode",
         "saints-gen-xp": "Saint's Gen - XP Mode",
-        "saints-shot": "Saint's Shot",
-        "saintx": "SaintX"
     }
     return names.get(product, product)
 
@@ -537,8 +527,6 @@ STATUS_MESSAGE_ID = None  # Will be set when bot sends/finds the status message
 PRODUCT_STATUS = {
     "saints-gen-gen": "risky",      # Saint's Gen - Gen Mode
     "saints-gen-xp": "undetected",  # Saint's Gen - XP Mode
-    "saints-shot": "undetected",
-    "saintx": "undetected"  # SaintX is now live
 }
 
 STATUS_DISPLAY = {
@@ -567,24 +555,6 @@ def build_status_embed() -> discord.Embed:
     embed.add_field(
         name="Saint's Gen",
         value=f"Gen Mode: {gen_mode_info['emoji']} {gen_mode_info['label']}\nXP Mode: {xp_mode_info['emoji']} {xp_mode_info['label']}",
-        inline=False
-    )
-
-    # Saint's Shot
-    shot_status = PRODUCT_STATUS.get("saints-shot", "undetected")
-    shot_info = STATUS_DISPLAY.get(shot_status, STATUS_DISPLAY["undetected"])
-    embed.add_field(
-        name="Saint's Shot",
-        value=f"{shot_info['emoji']} {shot_info['label']}",
-        inline=False
-    )
-
-    # SaintX
-    saintx_status = PRODUCT_STATUS.get("saintx", "undetected")
-    saintx_info = STATUS_DISPLAY.get(saintx_status, STATUS_DISPLAY["undetected"])
-    embed.add_field(
-        name="SaintX",
-        value=f"{saintx_info['emoji']} {saintx_info['label']}",
         inline=False
     )
 
@@ -662,8 +632,6 @@ async def send_audit_log(title: str, description: str, admin: discord.User, colo
 # Product choices for the generate command
 PRODUCT_CHOICES = [
     app_commands.Choice(name="Saint's Gen", value="saints-gen"),
-    app_commands.Choice(name="Saint's Shot", value="saints-shot"),
-    app_commands.Choice(name="SaintX", value="saintx"),
 ]
 
 
@@ -952,12 +920,7 @@ async def list_licenses(interaction: discord.Interaction, product: str = None):
         hwid_status = "🔒" if lic.get("hwid") else "🔓"
         # Product tag
         prod = lic.get("product", "saints-gen")
-        if prod == "saints-gen":
-            prod_tag = "[Gen]"
-        elif prod == "saints-shot":
-            prod_tag = "[Shot]"
-        else:
-            prod_tag = "[X]"
+        prod_tag = "[Gen]"
         embed.add_field(
             name=f"{hwid_status} {prod_tag} {lic['discord_name']}",
             value=f"Expires: {expires.strftime('%Y-%m-%d')} ({days_left}d left)",
@@ -984,7 +947,6 @@ async def stats(interaction: discord.Interaction):
 
     # Get stats for each product
     gen_stats = await get_license_stats("saints-gen")
-    shot_stats = await get_license_stats("saints-shot")
     all_stats = await get_license_stats()
 
     embed = discord.Embed(
@@ -1010,16 +972,6 @@ async def stats(interaction: discord.Interaction):
               f"**Active:** {gen_stats['active']}\n"
               f"**Expired:** {gen_stats['expired']}\n"
               f"**Revoked:** {gen_stats['revoked']}",
-        inline=True
-    )
-
-    # Saint's Shot stats
-    embed.add_field(
-        name="🏀 Saint's Shot",
-        value=f"**Total:** {shot_stats['total']}\n"
-              f"**Active:** {shot_stats['active']}\n"
-              f"**Expired:** {shot_stats['expired']}\n"
-              f"**Revoked:** {shot_stats['revoked']}",
         inline=True
     )
 
@@ -1090,7 +1042,7 @@ async def check(interaction: discord.Interaction, user: discord.User):
         return
 
     # Group licenses by product
-    products = ["saints-gen", "saints-shot", "saintx"]
+    products = ["saints-gen"]
 
     for prod in products:
         prod_name = get_product_name(prod)
@@ -1344,7 +1296,7 @@ async def status(interaction: discord.Interaction):
     all_licenses = await get_all_licenses_for_user(discord_id)
 
     # Filter to get best license per product (active, not revoked, latest expiry)
-    products = ["saints-gen", "saints-shot", "saintx"]
+    products = ["saints-gen"]
     active_subs = {}
 
     for prod in products:
@@ -1751,656 +1703,6 @@ async def redeem(interaction: discord.Interaction, email: str):
         print(f"Failed to log redemption: {e}")
 
 
-# ==================== REFERRAL SYSTEM ====================
-
-# Referral rewards for Saint's Shot (based on how many times the user has been referred)
-REFERRAL_REWARDS = {
-    1: 7,  # 1st referral: 7 days
-    2: 2,  # 2nd referral: 2 days
-    3: 2,  # 3rd referral: 2 days
-    4: 2,  # 4th referral: 2 days
-    5: 2,  # 5th referral: 2 days (cap)
-}
-MAX_REFERRALS = 5
-
-
-@bot.tree.command(name="referral", description="Record a mutual referral between two users for Saint's Shot")
-@is_admin_or_helper()
-@app_commands.describe(
-    user1="First user in the referral exchange",
-    user2="Second user in the referral exchange"
-)
-async def referral(interaction: discord.Interaction, user1: discord.User, user2: discord.User):
-    """Record a mutual referral between two users. Both users get days and referral counts updated."""
-    product = "saints-shot"
-    product_name = "Saint's Shot"
-
-    # Can't refer yourself
-    if user1.id == user2.id:
-        await interaction.response.send_message(
-            "A user cannot refer themselves!", ephemeral=True)
-        return
-
-    # Check if both users have active Saint's Shot licenses
-    user1_has_license = await has_active_license_for_product(str(user1.id), product)
-    user2_has_license = await has_active_license_for_product(str(user2.id), product)
-
-    if not user1_has_license and not user2_has_license:
-        await interaction.response.send_message(
-            f"Both users need an active **{product_name}** license to receive referral bonus.", ephemeral=True)
-        return
-    elif not user1_has_license:
-        await interaction.response.send_message(
-            f"{user1.mention} needs an active **{product_name}** license to receive referral bonus.", ephemeral=True)
-        return
-    elif not user2_has_license:
-        await interaction.response.send_message(
-            f"{user2.mention} needs an active **{product_name}** license to receive referral bonus.", ephemeral=True)
-        return
-
-    # Check if they've already referred each other
-    user1_referred_by_user2 = await has_been_referred_by(str(user1.id), str(user2.id), product)
-    user2_referred_by_user1 = await has_been_referred_by(str(user2.id), str(user1.id), product)
-
-    if user1_referred_by_user2 and user2_referred_by_user1:
-        await interaction.response.send_message(
-            f"{user1.mention} and {user2.mention} have already exchanged referrals!", ephemeral=True)
-        return
-
-    # Check referral counts for both users
-    user1_times_referred = await get_referral_count_received(str(user1.id), product)
-    user2_times_referred = await get_referral_count_received(str(user2.id), product)
-
-    # Track what we'll do
-    user1_gets_days = False
-    user2_gets_days = False
-    user1_days = 0
-    user2_days = 0
-    user1_referral_num = 0
-    user2_referral_num = 0
-
-    # Process user1 receiving referral from user2 (if not already done and not at cap)
-    if not user1_referred_by_user2 and user1_times_referred < MAX_REFERRALS:
-        user1_referral_num = user1_times_referred + 1
-        user1_days = REFERRAL_REWARDS.get(user1_referral_num, 2)
-        user1_gets_days = True
-
-    # Process user2 receiving referral from user1 (if not already done and not at cap)
-    if not user2_referred_by_user1 and user2_times_referred < MAX_REFERRALS:
-        user2_referral_num = user2_times_referred + 1
-        user2_days = REFERRAL_REWARDS.get(user2_referral_num, 2)
-        user2_gets_days = True
-
-    if not user1_gets_days and not user2_gets_days:
-        await interaction.response.send_message(
-            f"Both users have either reached the maximum referrals ({MAX_REFERRALS}) or already exchanged referrals.", ephemeral=True)
-        return
-
-    await interaction.response.defer(ephemeral=False)  # Show publicly so users in ticket can see
-
-    results = []
-    user1_new_expiry = None
-    user2_new_expiry = None
-
-    # Award user1
-    if user1_gets_days:
-        user1_new_expiry = await extend_user_license_for_product(str(user1.id), user1_days, product)
-        if user1_new_expiry:
-            await add_referral(str(user2.id), str(user1.id), user1_days, product)
-            results.append(f"✅ {user1.mention}: **+{user1_days} days** (Referral #{user1_referral_num})")
-        else:
-            results.append(f"❌ {user1.mention}: Failed to extend license")
-
-    # Award user2
-    if user2_gets_days:
-        user2_new_expiry = await extend_user_license_for_product(str(user2.id), user2_days, product)
-        if user2_new_expiry:
-            await add_referral(str(user1.id), str(user2.id), user2_days, product)
-            results.append(f"✅ {user2.mention}: **+{user2_days} days** (Referral #{user2_referral_num})")
-        else:
-            results.append(f"❌ {user2.mention}: Failed to extend license")
-
-    # Get updated stats
-    user1_stats = await get_referral_stats(str(user1.id), product)
-    user2_stats = await get_referral_stats(str(user2.id), product)
-
-    # Create success embed
-    embed = discord.Embed(
-        title="🎉 Mutual Referral Recorded!",
-        description=f"Referral exchange between {user1.mention} and {user2.mention}",
-        color=discord.Color.green()
-    )
-    embed.add_field(name="Results", value="\n".join(results), inline=False)
-    embed.add_field(
-        name=f"{user1.name}'s Stats",
-        value=f"Given: **{user1_stats['given']}** | Used: **{user1_stats['received']}/{MAX_REFERRALS}**\nDays Earned: **+{user1_stats['total_days_earned']}**",
-        inline=True
-    )
-    embed.add_field(
-        name=f"{user2.name}'s Stats",
-        value=f"Given: **{user2_stats['given']}** | Used: **{user2_stats['received']}/{MAX_REFERRALS}**\nDays Earned: **+{user2_stats['total_days_earned']}**",
-        inline=True
-    )
-
-    await interaction.followup.send(embed=embed)
-
-    # Audit log
-    await send_audit_log(
-        title="Mutual Referral Recorded",
-        description=f"Referral exchange between {user1.mention} and {user2.mention}",
-        admin=interaction.user,
-        color=discord.Color.purple(),
-        fields=[
-            {"name": "User 1", "value": f"{user1} (`{user1.id}`)\n+{user1_days} days" if user1_gets_days else f"{user1} (skipped)", "inline": True},
-            {"name": "User 2", "value": f"{user2} (`{user2.id}`)\n+{user2_days} days" if user2_gets_days else f"{user2} (skipped)", "inline": True},
-        ]
-    )
-
-    # DM both users
-    if user1_gets_days and user1_new_expiry:
-        try:
-            user1_expiry_dt = datetime.fromisoformat(user1_new_expiry)
-            dm_embed = discord.Embed(
-                title="🎉 Referral Bonus!",
-                description=f"You received a referral from {user2.mention}!",
-                color=discord.Color.green()
-            )
-            dm_embed.add_field(name="Days Added", value=f"+{user1_days} days", inline=True)
-            dm_embed.add_field(name="New Expiry", value=user1_expiry_dt.strftime("%Y-%m-%d"), inline=True)
-            dm_embed.add_field(name="Referrals Used", value=f"{user1_stats['received']}/{MAX_REFERRALS}", inline=True)
-            await user1.send(embed=dm_embed)
-        except discord.Forbidden:
-            pass
-
-    if user2_gets_days and user2_new_expiry:
-        try:
-            user2_expiry_dt = datetime.fromisoformat(user2_new_expiry)
-            dm_embed = discord.Embed(
-                title="🎉 Referral Bonus!",
-                description=f"You received a referral from {user1.mention}!",
-                color=discord.Color.green()
-            )
-            dm_embed.add_field(name="Days Added", value=f"+{user2_days} days", inline=True)
-            dm_embed.add_field(name="New Expiry", value=user2_expiry_dt.strftime("%Y-%m-%d"), inline=True)
-            dm_embed.add_field(name="Referrals Used", value=f"{user2_stats['received']}/{MAX_REFERRALS}", inline=True)
-            await user2.send(embed=dm_embed)
-        except discord.Forbidden:
-            pass
-
-
-@bot.tree.command(name="referral-stats", description="Check your referral statistics")
-async def referral_stats(interaction: discord.Interaction):
-    """Check your referral statistics for Saint's Shot."""
-    user = interaction.user
-    product = "saints-shot"
-    product_name = "Saint's Shot"
-
-    stats = await get_referral_stats(str(user.id), product)
-
-    embed = discord.Embed(
-        title=f"📊 Your {product_name} Referral Stats",
-        color=discord.Color.blue()
-    )
-    embed.add_field(name="Referrals Given", value=str(stats['given']), inline=True)
-    embed.add_field(name="Referrals Used", value=f"{stats['received']} / {MAX_REFERRALS}", inline=True)
-    embed.add_field(name="Total Days Earned", value=f"+{stats['total_days_earned']} days", inline=True)
-
-    # Show remaining referrals
-    remaining = MAX_REFERRALS - stats['received']
-    if remaining > 0:
-        next_reward = REFERRAL_REWARDS.get(stats['received'] + 1, 2)
-        embed.add_field(
-            name="Referrals Available",
-            value=f"You can use **{remaining}** more referral(s)\nNext referral: +{next_reward} days",
-            inline=False
-        )
-    else:
-        embed.add_field(
-            name="Referrals Available",
-            value="You have used all 5 referrals!",
-            inline=False
-        )
-
-    embed.set_thumbnail(url=user.display_avatar.url)
-    await interaction.response.send_message(embed=embed)
-
-
-# ==================== EXCHANGE SYSTEM ====================
-
-# Exchange rates based on pricing: Saint's Shot $10/week, SaintX $15/week
-# Saint's Shot -> SaintX: 10/15 = 2/3 (0.6667)
-# SaintX -> Saint's Shot: 15/10 = 3/2 (1.5)
-EXCHANGE_RATE_SHOT_TO_SAINTX = 2 / 3
-EXCHANGE_RATE_SAINTX_TO_SHOT = 3 / 2
-
-
-def format_time_duration(total_seconds: float) -> str:
-    """Format seconds into a readable duration string."""
-    days = int(total_seconds // 86400)
-    remaining = total_seconds % 86400
-    hours = int(remaining // 3600)
-    remaining = remaining % 3600
-    minutes = int(remaining // 60)
-
-    parts = []
-    if days > 0:
-        parts.append(f"{days} day{'s' if days != 1 else ''}")
-    if hours > 0:
-        parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
-    if minutes > 0 and days == 0:  # Only show minutes if less than a day
-        parts.append(f"{minutes} minute{'s' if minutes != 1 else ''}")
-
-    return ", ".join(parts) if parts else "less than a minute"
-
-
-class ExchangeConfirmView(discord.ui.View):
-    """Confirmation view for exchange - Yes/No buttons"""
-
-    def __init__(self, user: discord.User, source_product: str, target_product: str,
-                 source_seconds: float, target_seconds: float, source_license: dict, target_license: dict):
-        super().__init__(timeout=60)
-        self.user = user
-        self.source_product = source_product
-        self.target_product = target_product
-        self.source_seconds = source_seconds
-        self.target_seconds = target_seconds
-        self.source_license = source_license
-        self.target_license = target_license
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.user.id:
-            await interaction.response.send_message("This is not your exchange request.", ephemeral=True)
-            return False
-        return True
-
-    @discord.ui.button(label="Yes, Exchange", style=discord.ButtonStyle.green)
-    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-
-        # Disable buttons
-        for item in self.children:
-            item.disabled = True
-
-        discord_id = str(self.user.id)
-        from datetime import timedelta
-
-        # Subtract time from source license
-        source_key = self.source_license.get("license_key")
-        source_days_to_subtract = self.source_seconds / 86400
-
-        if source_key:
-            new_source_expiry = await extend_license(source_key, -source_days_to_subtract)
-            if not new_source_expiry:
-                embed = discord.Embed(
-                    title="Exchange Failed",
-                    description=f"Failed to update {self.source_product} license. Please contact support.",
-                    color=discord.Color.red()
-                )
-                await interaction.edit_original_response(embed=embed, view=None)
-                return
-
-        # Calculate remaining time on source after exchange
-        source_expires = self.source_license["expires_at"]
-        if isinstance(source_expires, str):
-            source_expires = datetime.fromisoformat(source_expires)
-        remaining_source_seconds = (source_expires - datetime.utcnow()).total_seconds() - self.source_seconds
-
-        # Add time to target license
-        target_days_to_add = self.target_seconds / 86400
-        target_product_key = "saintx" if self.target_product == "SaintX" else "saints-shot"
-        source_product_key = "saintx" if self.source_product == "SaintX" else "saints-shot"
-
-        if self.target_license and not self.target_license.get("revoked"):
-            # Extend existing license
-            new_target_expiry = await extend_user_license_for_product(discord_id, target_days_to_add, target_product_key)
-            if new_target_expiry:
-                target_expires = datetime.fromisoformat(new_target_expiry)
-            else:
-                # Restore source days
-                if source_key:
-                    await extend_license(source_key, source_days_to_subtract)
-                embed = discord.Embed(
-                    title="Exchange Failed",
-                    description=f"Failed to extend {self.target_product} license. Please contact support.",
-                    color=discord.Color.red()
-                )
-                await interaction.edit_original_response(embed=embed, view=None)
-                return
-        else:
-            # Create new license
-            target_expires = datetime.utcnow() + timedelta(seconds=self.target_seconds)
-
-            license_key, _ = generate_license_key(
-                SECRET_KEY,
-                discord_id,
-                int(target_days_to_add) + 1,  # Round up for key generation
-                self.user.display_name
-            )
-
-            success = await add_license(
-                license_key=license_key,
-                discord_id=discord_id,
-                discord_name=self.user.display_name,
-                expires_at=target_expires,
-                product=target_product_key
-            )
-
-            if not success:
-                # Restore source days
-                if source_key:
-                    await extend_license(source_key, source_days_to_add)
-                embed = discord.Embed(
-                    title="Exchange Failed",
-                    description=f"Failed to create {self.target_product} license. Please contact support.",
-                    color=discord.Color.red()
-                )
-                await interaction.edit_original_response(embed=embed, view=None)
-                return
-
-        # Handle roles
-        role_changes = []
-        if GUILD_ID:
-            try:
-                guild = bot.get_guild(GUILD_ID)
-                if guild:
-                    member = guild.get_member(self.user.id) or await guild.fetch_member(self.user.id)
-                    if member:
-                        # Remove source role if no time left
-                        if remaining_source_seconds <= 0:
-                            source_role_id = SAINTX_ROLE_ID if source_product_key == "saintx" else SAINTS_SHOT_ROLE_ID
-                            if source_role_id:
-                                source_role = guild.get_role(source_role_id)
-                                if source_role and source_role in member.roles:
-                                    await member.remove_roles(source_role, reason=f"Exchanged all time for {self.target_product}")
-                                    role_changes.append(f"{self.source_product} role removed")
-
-                        # Add target role
-                        target_role_id = SAINTX_ROLE_ID if target_product_key == "saintx" else SAINTS_SHOT_ROLE_ID
-                        if target_role_id:
-                            target_role = guild.get_role(target_role_id)
-                            if target_role and target_role not in member.roles:
-                                await member.add_roles(target_role, reason=f"Exchanged from {self.source_product}")
-                                role_changes.append(f"{self.target_product} role added")
-            except Exception as e:
-                print(f"Error updating roles during exchange: {e}")
-
-        # Success embed
-        embed = discord.Embed(
-            title="Exchange Complete!",
-            description=f"{self.user.mention} exchanged {self.source_product} for {self.target_product}!",
-            color=discord.Color.green()
-        )
-        embed.add_field(name=f"{self.source_product} Used", value=f"-{format_time_duration(self.source_seconds)}", inline=True)
-        embed.add_field(name=f"{self.target_product} Received", value=f"+{format_time_duration(self.target_seconds)}", inline=True)
-
-        if remaining_source_seconds > 0:
-            embed.add_field(name=f"{self.source_product} Remaining", value=format_time_duration(remaining_source_seconds), inline=True)
-
-        embed.add_field(name=f"{self.target_product} Expires", value=target_expires.strftime("%B %d, %Y at %I:%M %p UTC"), inline=True)
-
-        if role_changes:
-            embed.add_field(name="Roles", value=", ".join(role_changes), inline=False)
-
-        if target_product_key == "saintx":
-            embed.add_field(name="Next Steps", value="Head to <#1475702262729936979> to get started with SaintX!", inline=False)
-
-        embed.set_thumbnail(url=self.user.display_avatar.url)
-        await interaction.edit_original_response(embed=embed, view=None)
-
-        # DM the user
-        try:
-            dm_embed = discord.Embed(
-                title=f"{self.target_product} Exchange Complete!",
-                description=f"You exchanged **{format_time_duration(self.source_seconds)}** of {self.source_product} for **{format_time_duration(self.target_seconds)}** of {self.target_product}!",
-                color=discord.Color.green()
-            )
-            dm_embed.add_field(name="Your Discord ID", value=f"```{self.user.id}```", inline=False)
-            dm_embed.add_field(name=f"{self.target_product} Expires", value=target_expires.strftime("%B %d, %Y at %I:%M %p UTC"), inline=True)
-            if remaining_source_seconds > 0:
-                dm_embed.add_field(name=f"{self.source_product} Remaining", value=format_time_duration(remaining_source_seconds), inline=True)
-            dm_embed.add_field(
-                name="How to Activate",
-                value=f"1. Open {self.target_product}\n2. Enter your Discord ID\n3. Click Activate",
-                inline=False
-            )
-            await self.user.send(embed=dm_embed)
-        except discord.Forbidden:
-            pass
-
-        print(f"Exchange completed: {self.user} ({self.user.id}) - {format_time_duration(self.source_seconds)} {self.source_product} -> {format_time_duration(self.target_seconds)} {self.target_product}")
-
-    @discord.ui.button(label="No, Cancel", style=discord.ButtonStyle.red)
-    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = discord.Embed(
-            title="Exchange Cancelled",
-            description="Your exchange request has been cancelled.",
-            color=discord.Color.grey()
-        )
-        await interaction.response.edit_message(embed=embed, view=None)
-
-
-class ExchangeDaysModal(discord.ui.Modal):
-    """Modal popup to ask how many days to exchange"""
-
-    days_input = discord.ui.TextInput(
-        label="Time to Exchange",
-        placeholder="Enter days (e.g., 5 or 3.5 for 3 days 12 hours)",
-        required=True,
-        max_length=10
-    )
-
-    def __init__(self, user: discord.User, target_product: str, source_product: str,
-                 available_seconds: float, source_license: dict, target_license: dict):
-        super().__init__(title=f"Exchange to {target_product}")
-        self.user = user
-        self.target_product = target_product
-        self.source_product = source_product
-        self.available_seconds = available_seconds
-        self.source_license = source_license
-        self.target_license = target_license
-
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            days = float(self.days_input.value.strip())
-            if days <= 0:
-                raise ValueError("Days must be positive")
-        except ValueError:
-            embed = discord.Embed(
-                title="Invalid Input",
-                description="Please enter a valid number of days (e.g., 5 or 3.5).",
-                color=discord.Color.red()
-            )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-
-        requested_seconds = days * 86400
-
-        if requested_seconds > self.available_seconds:
-            available_days = self.available_seconds / 86400
-            embed = discord.Embed(
-                title="Not Enough Time",
-                description=f"You only have **{format_time_duration(self.available_seconds)}** available to exchange.",
-                color=discord.Color.red()
-            )
-            embed.add_field(name="Requested", value=f"{days} days", inline=True)
-            embed.add_field(name="Available", value=f"{available_days:.2f} days", inline=True)
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-
-        # Calculate target time based on exchange rate
-        if self.target_product == "SaintX":
-            target_seconds = requested_seconds * EXCHANGE_RATE_SHOT_TO_SAINTX
-            rate_display = "2/3 (Saint's Shot is $10/week, SaintX is $15/week)"
-        else:
-            target_seconds = requested_seconds * EXCHANGE_RATE_SAINTX_TO_SHOT
-            rate_display = "3/2 (SaintX is $15/week, Saint's Shot is $10/week)"
-
-        # Show confirmation
-        embed = discord.Embed(
-            title="Confirm Exchange",
-            description="Are you sure you want to make this exchange?",
-            color=discord.Color.gold()
-        )
-        embed.add_field(name=f"{self.source_product} to Use", value=format_time_duration(requested_seconds), inline=True)
-        embed.add_field(name=f"{self.target_product} to Receive", value=format_time_duration(target_seconds), inline=True)
-        embed.add_field(name="Exchange Rate", value=rate_display, inline=False)
-
-        remaining_seconds = self.available_seconds - requested_seconds
-        if remaining_seconds > 0:
-            embed.add_field(name=f"{self.source_product} Remaining After", value=format_time_duration(remaining_seconds), inline=False)
-        else:
-            embed.add_field(name="Note", value=f"This will use all your {self.source_product} time.", inline=False)
-
-        confirm_view = ExchangeConfirmView(
-            user=self.user,
-            source_product=self.source_product,
-            target_product=self.target_product,
-            source_seconds=requested_seconds,
-            target_seconds=target_seconds,
-            source_license=self.source_license,
-            target_license=self.target_license
-        )
-
-        await interaction.response.send_message(embed=embed, view=confirm_view)
-
-
-class ExchangeSelectView(discord.ui.View):
-    """Initial view with buttons to select exchange direction"""
-
-    def __init__(self, user: discord.User, shot_license: dict, saintx_license: dict,
-                 shot_available_seconds: float, saintx_available_seconds: float):
-        super().__init__(timeout=120)
-        self.user = user
-        self.shot_license = shot_license
-        self.saintx_license = saintx_license
-        self.shot_available_seconds = shot_available_seconds
-        self.saintx_available_seconds = saintx_available_seconds
-
-        # Disable SaintX button if user doesn't have Saint's Shot
-        if not shot_license or shot_available_seconds <= 0:
-            self.to_saintx.disabled = True
-            self.to_saintx.label = "Exchange to SaintX (No Saint's Shot)"
-
-        # Disable Saint's Shot button if user doesn't have SaintX
-        if not saintx_license or saintx_available_seconds <= 0:
-            self.to_shot.disabled = True
-            self.to_shot.label = "Exchange to Saint's Shot (No SaintX)"
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.user.id:
-            await interaction.response.send_message("This is not your exchange request.", ephemeral=True)
-            return False
-        return True
-
-    @discord.ui.button(label="Exchange to SaintX", style=discord.ButtonStyle.primary, row=0)  # Purple/Blurple
-    async def to_saintx(self, interaction: discord.Interaction, button: discord.ui.Button):
-        modal = ExchangeDaysModal(
-            user=self.user,
-            target_product="SaintX",
-            source_product="Saint's Shot",
-            available_seconds=self.shot_available_seconds,
-            source_license=self.shot_license,
-            target_license=self.saintx_license
-        )
-        await interaction.response.send_modal(modal)
-
-    @discord.ui.button(label="Exchange to Saint's Shot", style=discord.ButtonStyle.success, row=0)  # Green
-    async def to_shot(self, interaction: discord.Interaction, button: discord.ui.Button):
-        modal = ExchangeDaysModal(
-            user=self.user,
-            target_product="Saint's Shot",
-            source_product="SaintX",
-            available_seconds=self.saintx_available_seconds,
-            source_license=self.saintx_license,
-            target_license=self.shot_license
-        )
-        await interaction.response.send_modal(modal)
-
-
-@bot.tree.command(name="exchange", description="Exchange subscription days between Saint's Shot and SaintX")
-@app_commands.allowed_installs(guilds=True, users=True)
-@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-async def exchange(interaction: discord.Interaction):
-    """Exchange subscription days between Saint's Shot and SaintX."""
-    user = interaction.user
-    discord_id = str(user.id)
-
-    # Get both licenses
-    shot_license = await get_license_by_user(discord_id, "saints-shot")
-    saintx_license = await get_license_by_user(discord_id, "saintx")
-
-    now = datetime.utcnow()
-
-    # Calculate available time for each
-    shot_available_seconds = 0
-    if shot_license and not shot_license.get("revoked"):
-        shot_expires = shot_license["expires_at"]
-        if isinstance(shot_expires, str):
-            shot_expires = datetime.fromisoformat(shot_expires)
-        if shot_expires > now:
-            shot_available_seconds = (shot_expires - now).total_seconds()
-
-    saintx_available_seconds = 0
-    if saintx_license and not saintx_license.get("revoked"):
-        saintx_expires = saintx_license["expires_at"]
-        if isinstance(saintx_expires, str):
-            saintx_expires = datetime.fromisoformat(saintx_expires)
-        if saintx_expires > now:
-            saintx_available_seconds = (saintx_expires - now).total_seconds()
-
-    # Check if user has any active license
-    if shot_available_seconds <= 0 and saintx_available_seconds <= 0:
-        embed = discord.Embed(
-            title="No Active Subscriptions",
-            description=f"{user.mention} - You don't have any active subscriptions to exchange.",
-            color=discord.Color.red()
-        )
-        embed.add_field(
-            name="How to Get Started",
-            value="Purchase a subscription from the store!",
-            inline=False
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-        return
-
-    # Show selection view
-    embed = discord.Embed(
-        title="Exchange Subscription Time",
-        description="Select which product you want to exchange **to**:",
-        color=discord.Color.blue()
-    )
-
-    if shot_available_seconds > 0:
-        embed.add_field(
-            name="Saint's Shot Available",
-            value=f"{format_time_duration(shot_available_seconds)}",
-            inline=True
-        )
-
-    if saintx_available_seconds > 0:
-        embed.add_field(
-            name="SaintX Available",
-            value=f"{format_time_duration(saintx_available_seconds)}",
-            inline=True
-        )
-
-    embed.add_field(
-        name="Exchange Rates",
-        value="**Saint's Shot → SaintX:** 2/3 (you get fewer days)\n**SaintX → Saint's Shot:** 3/2 (you get more days)\n\n*Based on pricing: Saint's Shot $10/week, SaintX $15/week*",
-        inline=False
-    )
-
-    view = ExchangeSelectView(
-        user=user,
-        shot_license=shot_license,
-        saintx_license=saintx_license,
-        shot_available_seconds=shot_available_seconds,
-        saintx_available_seconds=saintx_available_seconds
-    )
-
-    await interaction.response.send_message(embed=embed, view=view)
-
-
 # ==================== STATUS COMMAND ====================
 
 STATUS_CHOICES = [
@@ -2413,8 +1715,6 @@ STATUS_CHOICES = [
 PRODUCT_CHOICES_STATUS = [
     app_commands.Choice(name="Saint's Gen - Gen Mode", value="saints-gen-gen"),
     app_commands.Choice(name="Saint's Gen - XP Mode", value="saints-gen-xp"),
-    app_commands.Choice(name="Saint's Shot", value="saints-shot"),
-    app_commands.Choice(name="SaintX", value="saintx"),
 ]
 
 

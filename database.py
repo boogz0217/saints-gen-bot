@@ -685,7 +685,7 @@ async def init_referrals_table():
                 id SERIAL PRIMARY KEY,
                 referrer_id TEXT NOT NULL,
                 referred_id TEXT NOT NULL,
-                product TEXT NOT NULL DEFAULT 'saints-shot',
+                product TEXT NOT NULL DEFAULT 'saints-gen',
                 days_awarded INTEGER NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(referrer_id, referred_id, product)
@@ -699,7 +699,7 @@ async def init_referrals_table():
         """)
 
 
-async def get_referral_count_received(discord_id: str, product: str = "saints-shot") -> int:
+async def get_referral_count_received(discord_id: str, product: str = "saints-gen") -> int:
     """Get how many times a user has been referred (received referrals)."""
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -710,7 +710,7 @@ async def get_referral_count_received(discord_id: str, product: str = "saints-sh
         return count or 0
 
 
-async def get_referral_count_given(discord_id: str, product: str = "saints-shot") -> int:
+async def get_referral_count_given(discord_id: str, product: str = "saints-gen") -> int:
     """Get how many referrals a user has given (referred others)."""
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -721,7 +721,7 @@ async def get_referral_count_given(discord_id: str, product: str = "saints-shot"
         return count or 0
 
 
-async def has_been_referred_by(referred_id: str, referrer_id: str, product: str = "saints-shot") -> bool:
+async def has_been_referred_by(referred_id: str, referrer_id: str, product: str = "saints-gen") -> bool:
     """Check if a user has already been referred by a specific referrer."""
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -732,7 +732,7 @@ async def has_been_referred_by(referred_id: str, referrer_id: str, product: str 
         return count > 0
 
 
-async def add_referral(referrer_id: str, referred_id: str, days_awarded: int, product: str = "saints-shot") -> bool:
+async def add_referral(referrer_id: str, referred_id: str, days_awarded: int, product: str = "saints-gen") -> bool:
     """Add a new referral record. Returns True if successful."""
     try:
         pool = await get_pool()
@@ -747,7 +747,7 @@ async def add_referral(referrer_id: str, referred_id: str, days_awarded: int, pr
         return False  # Duplicate or other error
 
 
-async def get_referral_stats(discord_id: str, product: str = "saints-shot") -> Dict:
+async def get_referral_stats(discord_id: str, product: str = "saints-gen") -> Dict:
     """Get referral statistics for a user."""
     pool = await get_pool()
     async with pool.acquire() as conn:

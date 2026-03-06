@@ -35,9 +35,6 @@ services:
       - key: PRIVATE_KEY_B64
         scope: RUN_TIME
         type: SECRET
-      - key: SAINTS_SHOT_ROLE_ID
-        scope: RUN_TIME
-        type: SECRET
       - key: DISCORD_CLIENT_ID
         scope: RUN_TIME
         type: SECRET

@@ -32,12 +32,6 @@ GUILD_ID = int(os.getenv("GUILD_ID", "0"))
 # Role to give to active subscribers (Saint's Gen)
 SUBSCRIBER_ROLE_ID = int(os.getenv("SUBSCRIBER_ROLE_ID", "0"))
 
-# Role to give to Saint's Shot subscribers
-SAINTS_SHOT_ROLE_ID = int(os.getenv("SAINTS_SHOT_ROLE_ID", "0"))
-
-# Role to give to SaintX subscribers
-SAINTX_ROLE_ID = int(os.getenv("SAINTX_ROLE_ID", "1475610259208016197"))
-
 # Store URL for renewal
 STORE_URL = os.getenv("STORE_URL", "https://saintservice.store/")
 
@@ -57,18 +51,6 @@ SHOPIFY_PRODUCT_MAP = {
     "saint's gen": {"product": "saints-gen", "days": 30},
     "saints gen": {"product": "saints-gen", "days": 30},
     "saints-gen": {"product": "saints-gen", "days": 30},
-
-    # Saint's Shot - Weekly (7 days)
-    "shot weekly": {"product": "saints-shot", "days": 7},
-    "shot 7": {"product": "saints-shot", "days": 7},
-    "weekly": {"product": "saints-shot", "days": 7},
-
-    # Saint's Shot - Monthly (30 days)
-    "shot monthly": {"product": "saints-shot", "days": 30},
-    "shot month": {"product": "saints-shot", "days": 30},
-    "saint's shot": {"product": "saints-shot", "days": 30},  # Default to monthly if just "Saint's Shot"
-    "saints shot": {"product": "saints-shot", "days": 30},
-    "saints-shot": {"product": "saints-shot", "days": 30},
 }
 # Default license duration if product not in map (in days)
 DEFAULT_LICENSE_DAYS = 30
