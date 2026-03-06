@@ -131,7 +131,7 @@ async def get_api_pool() -> asyncpg.Pool:
     return _api_pool
 
 
-app = FastAPI(title="Saint's Gen License API", docs_url=None, redoc_url=None)
+app = FastAPI(title="Saint Gen License API", docs_url=None, redoc_url=None)
 
 # Allow CORS for the macro to call
 app.add_middleware(
@@ -330,7 +330,7 @@ async def auth_discord(request: DiscordAuthRequest):
             if not row:
                 if requested_product:
                     product_names = {
-                        "saints-gen": "Saint's Gen",
+                        "saints-gen": "Saint Gen",
                     }
                     product_name = product_names.get(requested_product, requested_product)
                     return {
@@ -522,13 +522,13 @@ def get_license_config(order: dict) -> dict:
 
         print(f"Matching product: title='{title}', variant='{variant}', sku='{sku}'")
 
-        # Check for Saint's Gen
+        # Check for Saint Gen
         if "gen" in full_text:
-            print("Matched: Saint's Gen - 30 days")
+            print("Matched: Saint Gen - 30 days")
             return {"product": "saints-gen", "days": 30}
 
     # Default: saints-gen with default days
-    print("No match found, defaulting to Saint's Gen - 30 days")
+    print("No match found, defaulting to Saint Gen - 30 days")
     return {"product": "saints-gen", "days": DEFAULT_LICENSE_DAYS}
 
 
@@ -1323,7 +1323,7 @@ async def discord_oauth_callback(code: str = None, state: str = None, error: str
         # Mark as claimed
         await claim_pending_order(pending["id"], discord_id)
 
-        prod_name = "Saint's Gen"
+        prod_name = "Saint Gen"
 
         return HTMLResponse(f"""
             <html>

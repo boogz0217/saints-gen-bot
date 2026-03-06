@@ -1,5 +1,5 @@
 """
-Saint's Gen - License Bot
+Saint Gen - License Bot
 Discord bot for managing subscription licenses.
 """
 import discord
@@ -508,9 +508,9 @@ def get_role_id_for_product(product: str) -> int:
 def get_product_name(product: str) -> str:
     """Get display name for a product."""
     names = {
-        "saints-gen": "Saint's Gen",
-        "saints-gen-gen": "Saint's Gen - Gen Mode",
-        "saints-gen-xp": "Saint's Gen - XP Mode",
+        "saints-gen": "Saint Gen",
+        "saints-gen-gen": "Saint Gen - Gen Mode",
+        "saints-gen-xp": "Saint Gen - XP Mode",
     }
     return names.get(product, product)
 
@@ -525,40 +525,104 @@ STATUS_MESSAGE_ID = None  # Will be set when bot sends/finds the status message
 # ==================== PRODUCT STATUS ====================
 # Status values: "undetected", "risky", "detected", "maintenance"
 PRODUCT_STATUS = {
-    "saints-gen-gen": "risky",      # Saint's Gen - Gen Mode
-    "saints-gen-xp": "undetected",  # Saint's Gen - XP Mode
+    "saints-gen-gen": "risky",      # Saint Gen - Gen Mode
+    "saints-gen-xp": "undetected",  # Saint Gen - XP Mode
 }
 
 STATUS_DISPLAY = {
-    "undetected": {"emoji": "🟢", "label": "Undetected", "color": discord.Color.green()},
-    "risky": {"emoji": "🟡", "label": "Use At Your Own Risk", "color": discord.Color.gold()},
-    "detected": {"emoji": "🔴", "label": "Detected", "color": discord.Color.red()},
-    "maintenance": {"emoji": "⚠️", "label": "Under Maintenance", "color": discord.Color.orange()}
+    "undetected": {
+        "emoji": "<:undetected:1234567890>",  # Replace with custom emoji ID or use fallback
+        "bar": "░░░░░░░░░░",
+        "label": "UNDETECTED",
+        "color": 0x00FF88,  # Bright green
+        "icon": "✅"
+    },
+    "risky": {
+        "emoji": "<:risky:1234567891>",
+        "bar": "░░░░░░░░░░",
+        "label": "USE WITH CAUTION",
+        "color": 0xFFAA00,  # Orange
+        "icon": "⚠️"
+    },
+    "detected": {
+        "emoji": "<:detected:1234567892>",
+        "bar": "░░░░░░░░░░",
+        "label": "DETECTED",
+        "color": 0xFF3366,  # Red
+        "icon": "🚫"
+    },
+    "maintenance": {
+        "emoji": "<:maintenance:1234567893>",
+        "bar": "░░░░░░░░░░",
+        "label": "MAINTENANCE",
+        "color": 0x5865F2,  # Discord blurple
+        "icon": "🔧"
+    }
 }
+
+
+def get_status_bar(status: str) -> str:
+    """Generate a visual status bar based on status."""
+    if status == "undetected":
+        return "```ansi\n\u001b[0;32m████████████████████\u001b[0m\n```"
+    elif status == "risky":
+        return "```ansi\n\u001b[0;33m████████████████████\u001b[0m\n```"
+    elif status == "detected":
+        return "```ansi\n\u001b[0;31m████████████████████\u001b[0m\n```"
+    else:  # maintenance
+        return "```ansi\n\u001b[0;34m████████████████████\u001b[0m\n```"
 
 
 def build_status_embed() -> discord.Embed:
     """Build the status embed showing all product statuses."""
+    # Get statuses
+    gen_mode_status = PRODUCT_STATUS.get("saints-gen-gen", "undetected")
+    xp_mode_status = PRODUCT_STATUS.get("saints-gen-xp", "undetected")
+    gen_info = STATUS_DISPLAY.get(gen_mode_status, STATUS_DISPLAY["undetected"])
+    xp_info = STATUS_DISPLAY.get(xp_mode_status, STATUS_DISPLAY["undetected"])
+
+    # Determine overall color (worst status)
+    if gen_mode_status == "detected" or xp_mode_status == "detected":
+        embed_color = 0xFF3366
+    elif gen_mode_status == "risky" or xp_mode_status == "risky":
+        embed_color = 0xFFAA00
+    elif gen_mode_status == "maintenance" or xp_mode_status == "maintenance":
+        embed_color = 0x5865F2
+    else:
+        embed_color = 0x00FF88
+
     embed = discord.Embed(
-        title="🛡️ Product Status",
-        description="Current detection status for all products",
-        color=discord.Color.blurple(),
+        color=embed_color,
         timestamp=datetime.utcnow()
     )
 
-    # Saint's Gen with sub-modes
-    gen_mode_status = PRODUCT_STATUS.get("saints-gen-gen", "undetected")
-    xp_mode_status = PRODUCT_STATUS.get("saints-gen-xp", "undetected")
-    gen_mode_info = STATUS_DISPLAY.get(gen_mode_status, STATUS_DISPLAY["undetected"])
-    xp_mode_info = STATUS_DISPLAY.get(xp_mode_status, STATUS_DISPLAY["undetected"])
+    # Header with cool ASCII-style design
+    embed.set_author(
+        name="SAINT GEN • STATUS MONITOR",
+        icon_url="https://i.imgur.com/AfFp7pu.png"  # Replace with your logo
+    )
 
+    # Status display with visual bars
+    status_text = ""
+    status_text += f"**GEN MODE**\n"
+    status_text += f"{gen_info['icon']} `{gen_info['label']}`\n"
+    status_text += f"{'🟩' if gen_mode_status == 'undetected' else '🟨' if gen_mode_status == 'risky' else '🟥' if gen_mode_status == 'detected' else '🟦'}{'🟩' if gen_mode_status == 'undetected' else '🟨' if gen_mode_status == 'risky' else '🟥' if gen_mode_status == 'detected' else '🟦'}{'🟩' if gen_mode_status == 'undetected' else '🟨' if gen_mode_status == 'risky' else '🟥' if gen_mode_status == 'detected' else '🟦'}{'🟩' if gen_mode_status == 'undetected' else '🟨' if gen_mode_status == 'risky' else '🟥' if gen_mode_status == 'detected' else '🟦'}{'🟩' if gen_mode_status == 'undetected' else '🟨' if gen_mode_status == 'risky' else '🟥' if gen_mode_status == 'detected' else '🟦'}{'⬛'}{'⬛'}{'⬛'}{'⬛'}{'⬛'}\n\n"
+
+    status_text += f"**XP MODE**\n"
+    status_text += f"{xp_info['icon']} `{xp_info['label']}`\n"
+    status_text += f"{'🟩' if xp_mode_status == 'undetected' else '🟨' if xp_mode_status == 'risky' else '🟥' if xp_mode_status == 'detected' else '🟦'}{'🟩' if xp_mode_status == 'undetected' else '🟨' if xp_mode_status == 'risky' else '🟥' if xp_mode_status == 'detected' else '🟦'}{'🟩' if xp_mode_status == 'undetected' else '🟨' if xp_mode_status == 'risky' else '🟥' if xp_mode_status == 'detected' else '🟦'}{'🟩' if xp_mode_status == 'undetected' else '🟨' if xp_mode_status == 'risky' else '🟥' if xp_mode_status == 'detected' else '🟦'}{'🟩' if xp_mode_status == 'undetected' else '🟨' if xp_mode_status == 'risky' else '🟥' if xp_mode_status == 'detected' else '🟦'}{'🟩' if xp_mode_status == 'undetected' else '🟨' if xp_mode_status == 'risky' else '🟥' if xp_mode_status == 'detected' else '🟦'}{'🟩' if xp_mode_status == 'undetected' else '🟨' if xp_mode_status == 'risky' else '🟥' if xp_mode_status == 'detected' else '🟦'}{'🟩' if xp_mode_status == 'undetected' else '🟨' if xp_mode_status == 'risky' else '🟥' if xp_mode_status == 'detected' else '🟦'}{'🟩' if xp_mode_status == 'undetected' else '🟨' if xp_mode_status == 'risky' else '🟥' if xp_mode_status == 'detected' else '🟦'}{'🟩' if xp_mode_status == 'undetected' else '🟨' if xp_mode_status == 'risky' else '🟥' if xp_mode_status == 'detected' else '🟦'}"
+
+    embed.description = status_text
+
+    # Legend
     embed.add_field(
-        name="Saint's Gen",
-        value=f"Gen Mode: {gen_mode_info['emoji']} {gen_mode_info['label']}\nXP Mode: {xp_mode_info['emoji']} {xp_mode_info['label']}",
+        name="━━━━━━━━━━━━━━━━━━━━",
+        value="🟩 `Undetected` 🟨 `Caution` 🟥 `Detected` 🟦 `Maintenance`",
         inline=False
     )
 
-    embed.set_footer(text="Last updated")
+    embed.set_footer(text="⟳ Auto-updates • Last checked")
+
     return embed
 
 
@@ -631,7 +695,7 @@ async def send_audit_log(title: str, description: str, admin: discord.User, colo
 
 # Product choices for the generate command
 PRODUCT_CHOICES = [
-    app_commands.Choice(name="Saint's Gen", value="saints-gen"),
+    app_commands.Choice(name="Saint Gen", value="saints-gen"),
 ]
 
 
@@ -965,9 +1029,9 @@ async def stats(interaction: discord.Interaction):
         inline=True
     )
 
-    # Saint's Gen stats
+    # Saint Gen stats
     embed.add_field(
-        name="🎮 Saint's Gen",
+        name="🎮 Saint Gen",
         value=f"**Total:** {gen_stats['total']}\n"
               f"**Active:** {gen_stats['active']}\n"
               f"**Expired:** {gen_stats['expired']}\n"
@@ -1713,8 +1777,8 @@ STATUS_CHOICES = [
 ]
 
 PRODUCT_CHOICES_STATUS = [
-    app_commands.Choice(name="Saint's Gen - Gen Mode", value="saints-gen-gen"),
-    app_commands.Choice(name="Saint's Gen - XP Mode", value="saints-gen-xp"),
+    app_commands.Choice(name="Saint Gen - Gen Mode", value="saints-gen-gen"),
+    app_commands.Choice(name="Saint Gen - XP Mode", value="saints-gen-xp"),
 ]
 
 

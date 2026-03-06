@@ -29,7 +29,7 @@ BOT_PREFIX = "!"  # Not used for slash commands, but kept for potential future u
 # Guild (Server) ID for role management
 GUILD_ID = int(os.getenv("GUILD_ID", "0"))
 
-# Role to give to active subscribers (Saint's Gen)
+# Role to give to active subscribers (Saint Gen)
 SUBSCRIBER_ROLE_ID = int(os.getenv("SUBSCRIBER_ROLE_ID", "0"))
 
 # Store URL for renewal
@@ -47,7 +47,8 @@ SHOPIFY_PRODUCT_MAP = {
     # Map Shopify product titles/handles to your license products
     # The bot will match these strings (case-insensitive) against product title, handle, variant, or SKU
 
-    # Saint's Gen - 30 days monthly
+    # Saint Gen - 30 days monthly
+    "saint gen": {"product": "saints-gen", "days": 30},
     "saint's gen": {"product": "saints-gen", "days": 30},
     "saints gen": {"product": "saints-gen", "days": 30},
     "saints-gen": {"product": "saints-gen", "days": 30},

@@ -1,4 +1,4 @@
-# SAINT's Gen License System - Claude Notes
+# Saint Gen License System - Notes
 
 ## Deployment (DigitalOcean App Platform)
 **URL:** `https://saints-gen-bot-ohez9.ondigitalocean.app`
@@ -20,7 +20,7 @@ Auto-deploys from GitHub - changes go live within 1-2 minutes.
 ## Products & Roles
 | Product | Days | Role Variable |
 |---------|------|---------------|
-| Saint's Gen | 30 | `SUBSCRIBER_ROLE_ID` |
+| Saint Gen | 30 | `SUBSCRIBER_ROLE_ID` |
 
 ## How It Works
 1. Customer buys on Shopify
@@ -38,7 +38,7 @@ Auto-deploys from GitHub - changes go live within 1-2 minutes.
 
 ## Discord Channels
 - **Redemption Log:** `1290509478445322292`
-- **Saint's Gen Instructions:** `1467010934613737516`
+- **Saint Gen Instructions:** `1467010934613737516`
 - **Guild ID:** `1290387028185448469`
 
 ## Key Files
