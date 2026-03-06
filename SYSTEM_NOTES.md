@@ -5,7 +5,7 @@
 
 **To deploy updates:**
 ```bash
-cd "C:\Users\seven\Desktop\New folder\BEST WORKING VERSION\discord_bot"
+cd "C:\Users\seven\Desktop\SaintGen\discord_bot"
 git add <files>
 git commit -m "message"
 git push
