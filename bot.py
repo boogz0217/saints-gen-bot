@@ -649,7 +649,7 @@ async def update_status_message():
     try:
         async for message in channel.history(limit=50):
             if message.author == bot.user and message.embeds:
-                if message.embeds[0].title == "🛡️ Product Status":
+                if message.embeds[0].title == "SAINT GEN • STATUS MONITOR":
                     STATUS_MESSAGE_ID = message.id
                     await message.edit(embed=embed)
                     print(f"Found and updated existing status message: {STATUS_MESSAGE_ID}")
