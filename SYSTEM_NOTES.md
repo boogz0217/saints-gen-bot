@@ -14,9 +14,6 @@ Auto-deploys from GitHub - changes go live within 1-2 minutes.
 
 **GitHub Repo:** `https://github.com/boogz0217/saints-gen-bot.git`
 
-## Old Railway URL (deprecated)
-`worker-production-767a.up.railway.app`
-
 ## Products & Roles
 | Product | Days | Role Variable |
 |---------|------|---------------|
@@ -34,7 +31,7 @@ Auto-deploys from GitHub - changes go live within 1-2 minutes.
 - One license per product per user
 - Repurchasing adds days to existing license
 - Each purchase can only be redeemed once (marked redeemed=1)
-- License tied to Discord ID (user logs in with Discord, no visible key)
+- License tied to Discord ID (user logs in with Discord, no license key needed)
 
 ## Discord Channels
 - **Redemption Log:** `1290509478445322292`
@@ -43,7 +40,7 @@ Auto-deploys from GitHub - changes go live within 1-2 minutes.
 
 ## Key Files
 - `bot.py` - Discord bot, /redeem command, role assignment
-- `api.py` - FastAPI server, Shopify webhook
+- `api.py` - FastAPI server, Shopify webhook, license verification
 - `database.py` - PostgreSQL functions (purchases table, licenses table)
 - `config.py` - Environment variables
 
@@ -52,18 +49,21 @@ Auto-deploys from GitHub - changes go live within 1-2 minutes.
 - `purchases` - Shopify purchases awaiting redemption (email, product, days, redeemed)
 
 ## Shopify Webhook
-- URL: `https://worker-production-767a.up.railway.app/shopify/webhook`
+- URL: `https://saints-gen-bot-ohez9.ondigitalocean.app/shopify/webhook`
 - Event: Order payment
 - Secret stored in `SHOPIFY_WEBHOOK_SECRET` env var
 
 ## User Commands
-- `/redeem email@example.com` - Redeem purchase
-- `/status` - Check license status
+- `/redeem email` - Redeem purchase using Shopify email
+- `/status` - Check license status and expiration
 - `/balance` - Show balance publicly
+- `/id` - Get your Discord ID for app activation
 
 ## Admin Commands
 - `/generate user days product` - Give user access
-- `/revoke` - Revoke license
-- `/extend` - Add/remove days
+- `/revoke user` - Revoke all licenses for a user
+- `/extend user days product` - Add/remove days from license
 - `/list` - List active licenses
-- `/reset-hwid` - Reset hardware binding
+- `/reset-hwid user` - Reset hardware binding for a user
+- `/set-status product status` - Update product detection status
+- `/pending-orders` - View pending Shopify order notifications
