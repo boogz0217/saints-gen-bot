@@ -117,7 +117,7 @@ class HWIDResetView(discord.ui.View):
             )
             embed.add_field(
                 name="Alternative",
-                value="Contact support for a free HWID reset.",
+                value="Contact support if you need assistance.",
                 inline=False
             )
             await interaction.followup.send(embed=embed, ephemeral=True)
@@ -182,7 +182,7 @@ class HWIDResetView(discord.ui.View):
             value="Open Saint Gen and enter your Discord ID to activate on your new PC.",
             inline=False
         )
-        embed.set_footer(text="Tip: Contact support for free resets if you have issues!")
+        embed.set_footer(text="Saint Gen • Self-Service Portal")
 
         await interaction.followup.send(embed=embed, ephemeral=True)
 
@@ -1764,12 +1764,7 @@ def build_hwid_reset_embed() -> discord.Embed:
     embed.add_field(
         name="⚠️ Requirements",
         value="• Active Saint Gen license\n• At least 6 hours remaining",
-        inline=True
-    )
-    embed.add_field(
-        name="💡 Free Alternative",
-        value="Contact support for a free HWID reset if you prefer not to lose time.",
-        inline=True
+        inline=False
     )
     embed.set_footer(text="Saint Gen • Self-Service Portal")
     return embed
