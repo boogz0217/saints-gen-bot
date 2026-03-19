@@ -507,10 +507,10 @@ def extract_discord_id(order: dict) -> Optional[str]:
     return None
 
 
-def get_license_config(order: dict) -> dict:
+def get_license_config(order: dict) -> dict | None:
     """
     Determine license product and duration based on Shopify order.
-    Returns {"product": "saints-gen", "days": 30}
+    Returns {"product": "saints-gen", "days": 30} or None if no license product found.
     """
     for item in order.get("line_items", []):
         title = item.get("title", "").lower()
@@ -523,13 +523,13 @@ def get_license_config(order: dict) -> dict:
         print(f"Matching product: title='{title}', variant='{variant}', sku='{sku}'")
 
         # Check for Saint Gen
-        if "gen" in full_text:
+        if "gen" in full_text or "saint" in full_text:
             print("Matched: Saint Gen - 30 days")
             return {"product": "saints-gen", "days": 30}
 
-    # Default: saints-gen with default days
-    print("No match found, defaulting to Saint Gen - 30 days")
-    return {"product": "saints-gen", "days": DEFAULT_LICENSE_DAYS}
+    # No license product found (e.g., setup fee, other non-license products)
+    print("No license product found - skipping license creation")
+    return None
 
 
 @app.post("/shopify/webhook")
@@ -563,6 +563,17 @@ async def shopify_order_webhook(
 
     # Get license configuration based on product
     license_config = get_license_config(order)
+
+    # If no license product found (e.g., setup fee), acknowledge but don't create purchase
+    if license_config is None:
+        print(f"Order #{order_number}: No license product - skipping purchase creation")
+        return {
+            "success": True,
+            "order_number": order_number,
+            "email": email,
+            "message": "Order received but no license product found - no redemption created."
+        }
+
     product = license_config["product"]
     days = license_config["days"]
 
