@@ -71,15 +71,15 @@ def parse_version(version: str) -> tuple:
 # Per-product version requirements (used for license version enforcement)
 PRODUCT_VERSIONS = {
     "saints-gen": {
-        "current": "2.6.7",
-        "min": "2.6.7",
+        "current": "2.6.8",
+        "min": "2.6.8",
         "message": "Please download the latest version from the Discord server."
     }
 }
 
 # Default/legacy versions (for clients that don't specify product)
-CURRENT_VERSION = "2.6.7"
-MIN_VERSION = "2.6.7"
+CURRENT_VERSION = "2.6.8"
+MIN_VERSION = "2.6.8"
 
 
 def check_version_allowed(product: str, version: str) -> tuple:
