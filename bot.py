@@ -30,6 +30,185 @@ from database import (
 from license_crypto import generate_license_key, get_key_info
 
 
+# ==================== SELF-SERVICE HWID RESET (View must be defined before bot) ====================
+
+HWID_RESET_CHANNEL_ID = 1484207790279884952
+
+
+class HWIDResetView(discord.ui.View):
+    """Persistent view for self-service HWID reset button."""
+
+    def __init__(self):
+        super().__init__(timeout=None)  # Persistent view
+
+    @discord.ui.button(
+        label="Reset My HWID",
+        style=discord.ButtonStyle.danger,
+        custom_id="hwid_reset_button",
+        emoji="🔄"
+    )
+    async def reset_hwid_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Handle HWID reset button click."""
+        await interaction.response.defer(ephemeral=True)
+
+        discord_id = str(interaction.user.id)
+        product = "saints-gen"
+
+        # Check if user has an active license for Saint Gen
+        license_info = await get_license_by_user(discord_id, product)
+
+        if not license_info:
+            embed = discord.Embed(
+                title="No License Found",
+                description="You don't have an active **Saint Gen** license.",
+                color=discord.Color.red()
+            )
+            embed.add_field(
+                name="Need Access?",
+                value=f"Visit https://saintservice.store/ to purchase a subscription!",
+                inline=False
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            return
+
+        if license_info.get("revoked"):
+            embed = discord.Embed(
+                title="License Revoked",
+                description="Your license has been revoked. Please contact support.",
+                color=discord.Color.red()
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            return
+
+        # Check if license is expired
+        expires_at = license_info["expires_at"]
+        if isinstance(expires_at, str):
+            expires_at = datetime.fromisoformat(expires_at)
+
+        now = datetime.utcnow()
+        if expires_at <= now:
+            embed = discord.Embed(
+                title="License Expired",
+                description="Your license has expired.",
+                color=discord.Color.red()
+            )
+            embed.add_field(
+                name="Renew",
+                value=f"Visit https://saintservice.store/ to renew your subscription!",
+                inline=False
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            return
+
+        # Check if they have enough time remaining (need at least 6 hours)
+        time_remaining = expires_at - now
+        hours_remaining = time_remaining.total_seconds() / 3600
+
+        if hours_remaining < 6:
+            embed = discord.Embed(
+                title="Not Enough Time",
+                description="You need at least **6 hours** remaining on your license to use self-service HWID reset.",
+                color=discord.Color.orange()
+            )
+            embed.add_field(
+                name="Time Remaining",
+                value=f"{hours_remaining:.1f} hours",
+                inline=True
+            )
+            embed.add_field(
+                name="Alternative",
+                value="Contact support for a free HWID reset.",
+                inline=False
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            return
+
+        # Check if HWID is even bound
+        current_hwid = license_info.get("hwid")
+        if not current_hwid:
+            embed = discord.Embed(
+                title="No HWID Bound",
+                description="Your license isn't bound to any PC yet. No reset needed!",
+                color=discord.Color.blue()
+            )
+            embed.add_field(
+                name="How to Activate",
+                value="Simply open Saint Gen and enter your Discord ID to activate.",
+                inline=False
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            return
+
+        # Reset HWID and deduct 6 hours
+        from database import get_pool
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            # Deduct 6 hours and reset HWID
+            new_expiry = expires_at - timedelta(hours=6)
+            await conn.execute(
+                """UPDATE licenses
+                   SET hwid = NULL, expires_at = $1
+                   WHERE discord_id = $2 AND product = $3 AND revoked = 0""",
+                new_expiry, discord_id, product
+            )
+
+        # Calculate new time remaining
+        new_hours_remaining = (new_expiry - now).total_seconds() / 3600
+        new_days_remaining = new_hours_remaining / 24
+
+        # Success response
+        embed = discord.Embed(
+            title="HWID Reset Successful",
+            description="Your hardware binding has been reset. You can now activate on a new PC.",
+            color=discord.Color.green()
+        )
+        embed.add_field(
+            name="Time Deducted",
+            value="-6 hours",
+            inline=True
+        )
+        embed.add_field(
+            name="New Expiry",
+            value=new_expiry.strftime("%B %d, %Y %H:%M UTC"),
+            inline=True
+        )
+        embed.add_field(
+            name="Time Remaining",
+            value=f"{new_days_remaining:.1f} days ({new_hours_remaining:.0f} hours)",
+            inline=False
+        )
+        embed.add_field(
+            name="Next Steps",
+            value="Open Saint Gen and enter your Discord ID to activate on your new PC.",
+            inline=False
+        )
+        embed.set_footer(text="Tip: Contact support for free resets if you have issues!")
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+        # Log to audit channel (send_audit_log is defined later but called at runtime)
+        try:
+            audit_channel = interaction.client.get_channel(1290509478445322292)
+            if audit_channel:
+                audit_embed = discord.Embed(
+                    title="Self-Service HWID Reset",
+                    description=f"{interaction.user.mention} reset their own HWID",
+                    color=discord.Color.orange(),
+                    timestamp=datetime.utcnow()
+                )
+                audit_embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
+                audit_embed.add_field(name="User", value=f"{interaction.user} (`{interaction.user.id}`)", inline=True)
+                audit_embed.add_field(name="Product", value="Saint Gen", inline=True)
+                audit_embed.add_field(name="Time Deducted", value="-6 hours", inline=True)
+                audit_embed.add_field(name="New Expiry", value=new_expiry.strftime("%Y-%m-%d %H:%M"), inline=True)
+                audit_embed.set_footer(text=f"User ID: {interaction.user.id}")
+                await audit_channel.send(embed=audit_embed)
+        except Exception as e:
+            print(f"Failed to send audit log: {e}")
+
+        print(f"[HWID] Self-service reset by {interaction.user} ({interaction.user.id}) - 6 hours deducted")
+
+
 class LicenseBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
@@ -43,6 +222,8 @@ class LicenseBot(commands.Bot):
         await init_notifications_table()
         await init_linked_accounts_table()
         await init_purchases_table()
+        # Register persistent views (must be done before sync)
+        self.add_view(HWIDResetView())
         # Sync slash commands globally and to specific guild for instant availability
         await self.tree.sync()
         # Instant sync to your server
@@ -1562,6 +1743,77 @@ async def setstatus(interaction: discord.Interaction, product: str, status: str)
             {"name": "Old Status", "value": f"{old_info['emoji']} {old_info['label']}", "inline": True},
             {"name": "New Status", "value": f"{new_info['emoji']} {new_info['label']}", "inline": True},
         ]
+    )
+
+
+# ==================== SELF-SERVICE HWID RESET (Admin Command) ====================
+
+def build_hwid_reset_embed() -> discord.Embed:
+    """Build the embed for the HWID reset panel."""
+    embed = discord.Embed(
+        title="🔄 Self-Service HWID Reset",
+        description=(
+            "Need to switch to a new PC? Use the button below to reset your hardware binding.\n\n"
+            "**How it works:**\n"
+            "• Click the button to reset your HWID\n"
+            "• **6 hours** will be deducted from your license\n"
+            "• You can then activate Saint Gen on a new PC\n"
+        ),
+        color=discord.Color.blurple()
+    )
+    embed.add_field(
+        name="⚠️ Requirements",
+        value="• Active Saint Gen license\n• At least 6 hours remaining",
+        inline=True
+    )
+    embed.add_field(
+        name="💡 Free Alternative",
+        value="Contact support for a free HWID reset if you prefer not to lose time.",
+        inline=True
+    )
+    embed.set_footer(text="Saint Gen • Self-Service Portal")
+    return embed
+
+
+@bot.tree.command(name="setup-hwid-reset", description="[Admin] Send the HWID reset panel to the reset channel")
+@is_admin()
+async def setup_hwid_reset(interaction: discord.Interaction):
+    """Send the HWID reset button panel to the designated channel."""
+    channel = bot.get_channel(HWID_RESET_CHANNEL_ID)
+
+    if not channel:
+        await interaction.response.send_message(
+            f"Could not find channel with ID `{HWID_RESET_CHANNEL_ID}`",
+            ephemeral=True
+        )
+        return
+
+    # Delete old HWID reset messages from bot
+    try:
+        async for message in channel.history(limit=50):
+            if message.author == bot.user and message.embeds:
+                if message.embeds[0].title and "HWID Reset" in message.embeds[0].title:
+                    await message.delete()
+    except Exception as e:
+        print(f"Error cleaning old HWID reset messages: {e}")
+
+    # Send new panel
+    embed = build_hwid_reset_embed()
+    view = HWIDResetView()
+
+    await channel.send(embed=embed, view=view)
+
+    await interaction.response.send_message(
+        f"HWID reset panel sent to <#{HWID_RESET_CHANNEL_ID}>",
+        ephemeral=True
+    )
+
+    # Audit log
+    await send_audit_log(
+        title="HWID Reset Panel Setup",
+        description=f"HWID reset panel posted to <#{HWID_RESET_CHANNEL_ID}>",
+        admin=interaction.user,
+        color=discord.Color.blue()
     )
 
 
