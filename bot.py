@@ -707,6 +707,7 @@ STATUS_MESSAGE_ID = None  # Will be set when bot sends/finds the status message
 # Organized by game category — add new games/modes here
 GAME_CATEGORIES = {
     "NBA 2K26": {
+        "tool": "Saint Gen",
         "products": ["saints-gen-gen", "saints-gen-xp"],
     },
     # Add more games here, e.g.:
@@ -784,7 +785,7 @@ def build_status_embed() -> discord.Embed:
         timestamp=datetime.utcnow()
     )
 
-    embed.title = "SAINT GEN • STATUS MONITOR"
+    embed.title = "SAINT STATUS"
 
     def status_squares(s, count=10):
         sq = '🟩' if s == 'undetected' else '🟨' if s == 'risky' else '🟥' if s == 'detected' else '🟦'
@@ -793,7 +794,11 @@ def build_status_embed() -> discord.Embed:
     # Build status text grouped by game category
     status_text = ""
     for game_name, cat_info in GAME_CATEGORIES.items():
-        status_text += f"__**{game_name}**__\n\n"
+        tool_name = cat_info.get("tool", "")
+        header = f"__**{game_name}**__"
+        if tool_name:
+            header += f" — *{tool_name}*"
+        status_text += f"{header}\n\n"
         for product_key in cat_info["products"]:
             product_status = PRODUCT_STATUS.get(product_key, "undetected")
             info = STATUS_DISPLAY.get(product_status, STATUS_DISPLAY["undetected"])
