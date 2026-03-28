@@ -704,9 +704,25 @@ STATUS_MESSAGE_ID = None  # Will be set when bot sends/finds the status message
 
 # ==================== PRODUCT STATUS ====================
 # Status values: "undetected", "risky", "detected", "maintenance"
+# Organized by game category — add new games/modes here
+GAME_CATEGORIES = {
+    "NBA 2K26": {
+        "products": ["saints-gen-gen", "saints-gen-xp"],
+    },
+    # Add more games here, e.g.:
+    # "Madden 26": {
+    #     "products": ["madden-gen", "madden-xp"],
+    # },
+}
+
 PRODUCT_STATUS = {
-    "saints-gen-gen": "risky",      # Saint Gen - Gen Mode
-    "saints-gen-xp": "undetected",  # Saint Gen - XP Mode
+    "saints-gen-gen": "risky",      # NBA 2K26 - Gen Mode
+    "saints-gen-xp": "undetected",  # NBA 2K26 - XP Mode
+}
+
+PRODUCT_DISPLAY_NAMES = {
+    "saints-gen-gen": "Gen Mode",
+    "saints-gen-xp": "XP Mode",
 }
 
 STATUS_DISPLAY = {
@@ -754,42 +770,39 @@ def get_status_bar(status: str) -> str:
 
 
 def build_status_embed() -> discord.Embed:
-    """Build the status embed showing all product statuses."""
-    # Get statuses
-    gen_mode_status = PRODUCT_STATUS.get("saints-gen-gen", "undetected")
-    xp_mode_status = PRODUCT_STATUS.get("saints-gen-xp", "undetected")
-    gen_info = STATUS_DISPLAY.get(gen_mode_status, STATUS_DISPLAY["undetected"])
-    xp_info = STATUS_DISPLAY.get(xp_mode_status, STATUS_DISPLAY["undetected"])
+    """Build the status embed showing all product statuses, grouped by game."""
+    # Determine worst status across all products for embed color
+    severity = {"detected": 3, "risky": 2, "maintenance": 1, "undetected": 0}
+    worst = max((PRODUCT_STATUS.get(p, "undetected")
+                 for cat in GAME_CATEGORIES.values()
+                 for p in cat["products"]),
+                key=lambda s: severity.get(s, 0))
 
-    # Determine overall color (worst status)
-    if gen_mode_status == "detected" or xp_mode_status == "detected":
-        embed_color = 0xFF3366
-    elif gen_mode_status == "risky" or xp_mode_status == "risky":
-        embed_color = 0xFFAA00
-    elif gen_mode_status == "maintenance" or xp_mode_status == "maintenance":
-        embed_color = 0x5865F2
-    else:
-        embed_color = 0x00FF88
-
+    color_map = {"detected": 0xFF3366, "risky": 0xFFAA00, "maintenance": 0x5865F2, "undetected": 0x00FF88}
     embed = discord.Embed(
-        color=embed_color,
+        color=color_map.get(worst, 0x00FF88),
         timestamp=datetime.utcnow()
     )
 
-    # Header with clean design
     embed.title = "SAINT GEN • STATUS MONITOR"
 
-    # Status display with visual bars
+    def status_squares(s, count=10):
+        sq = '🟩' if s == 'undetected' else '🟨' if s == 'risky' else '🟥' if s == 'detected' else '🟦'
+        return sq * count
+
+    # Build status text grouped by game category
     status_text = ""
-    status_text += f"**GEN MODE**\n"
-    status_text += f"{gen_info['icon']} `{gen_info['label']}`\n"
-    status_text += f"{'🟩' if gen_mode_status == 'undetected' else '🟨' if gen_mode_status == 'risky' else '🟥' if gen_mode_status == 'detected' else '🟦'}{'🟩' if gen_mode_status == 'undetected' else '🟨' if gen_mode_status == 'risky' else '🟥' if gen_mode_status == 'detected' else '🟦'}{'🟩' if gen_mode_status == 'undetected' else '🟨' if gen_mode_status == 'risky' else '🟥' if gen_mode_status == 'detected' else '🟦'}{'🟩' if gen_mode_status == 'undetected' else '🟨' if gen_mode_status == 'risky' else '🟥' if gen_mode_status == 'detected' else '🟦'}{'🟩' if gen_mode_status == 'undetected' else '🟨' if gen_mode_status == 'risky' else '🟥' if gen_mode_status == 'detected' else '🟦'}{'⬛'}{'⬛'}{'⬛'}{'⬛'}{'⬛'}\n\n"
+    for game_name, cat_info in GAME_CATEGORIES.items():
+        status_text += f"__**{game_name}**__\n\n"
+        for product_key in cat_info["products"]:
+            product_status = PRODUCT_STATUS.get(product_key, "undetected")
+            info = STATUS_DISPLAY.get(product_status, STATUS_DISPLAY["undetected"])
+            display_name = PRODUCT_DISPLAY_NAMES.get(product_key, product_key)
+            status_text += f"**{display_name.upper()}**\n"
+            status_text += f"{info['icon']} `{info['label']}`\n"
+            status_text += f"{status_squares(product_status)}\n\n"
 
-    status_text += f"**XP MODE**\n"
-    status_text += f"{xp_info['icon']} `{xp_info['label']}`\n"
-    status_text += f"{'🟩' if xp_mode_status == 'undetected' else '🟨' if xp_mode_status == 'risky' else '🟥' if xp_mode_status == 'detected' else '🟦'}{'🟩' if xp_mode_status == 'undetected' else '🟨' if xp_mode_status == 'risky' else '🟥' if xp_mode_status == 'detected' else '🟦'}{'🟩' if xp_mode_status == 'undetected' else '🟨' if xp_mode_status == 'risky' else '🟥' if xp_mode_status == 'detected' else '🟦'}{'🟩' if xp_mode_status == 'undetected' else '🟨' if xp_mode_status == 'risky' else '🟥' if xp_mode_status == 'detected' else '🟦'}{'🟩' if xp_mode_status == 'undetected' else '🟨' if xp_mode_status == 'risky' else '🟥' if xp_mode_status == 'detected' else '🟦'}{'🟩' if xp_mode_status == 'undetected' else '🟨' if xp_mode_status == 'risky' else '🟥' if xp_mode_status == 'detected' else '🟦'}{'🟩' if xp_mode_status == 'undetected' else '🟨' if xp_mode_status == 'risky' else '🟥' if xp_mode_status == 'detected' else '🟦'}{'🟩' if xp_mode_status == 'undetected' else '🟨' if xp_mode_status == 'risky' else '🟥' if xp_mode_status == 'detected' else '🟦'}{'🟩' if xp_mode_status == 'undetected' else '🟨' if xp_mode_status == 'risky' else '🟥' if xp_mode_status == 'detected' else '🟦'}{'🟩' if xp_mode_status == 'undetected' else '🟨' if xp_mode_status == 'risky' else '🟥' if xp_mode_status == 'detected' else '🟦'}"
-
-    embed.description = status_text
+    embed.description = status_text.rstrip("\n")
 
     # Legend
     embed.add_field(
